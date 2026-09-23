@@ -1,5 +1,7 @@
 # warpi
 
+<img src="docs/assets/warpi-wordmark.png" alt="warpi wordmark" width="320">
+
 warpi is a fork of [Warp](https://github.com/warpdotdev/warp) (pinned at
 `71088ba18d27114ccfb358901c66b54220cf30d0`) that keeps the native Warp UI and
 replaces the cloud agent backend with a local one. Agent inference runs against a
