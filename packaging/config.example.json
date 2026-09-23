@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "profiles": [
+    {
+      "id": "local",
+      "display_name": "Local OpenAI-compatible endpoint",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "wire": "open_ai_chat_completions",
+      "model_id": "replace-with-your-model-id",
+      "credential": "none",
+      "context_limit": 131072,
+      "output_limit": 8192,
+      "compat": {
+        "supports_developer_role": false
+      },
+      "reasoning": false,
+      "supports_image_input": false
+    }
+  ],
+  "active_profile": "local",
+  "load_context_files": true,
+  "max_context_file_bytes": 65536
+}

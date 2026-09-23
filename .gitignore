@@ -75,3 +75,16 @@ __pycache__/
 standalone/pi-helper/node_modules/
 standalone/pi-helper/dist/
 standalone/config.local.json
+
+# warpi fork: build output, bundled artifacts, and local state
+target/
+standalone/pi-helper/node_modules/
+standalone/pi-helper/dist/
+dist/
+*.log
+.warpi/
+standalone/config.local.json
+config.local.json
+.env
+.env.*
+!.env.example

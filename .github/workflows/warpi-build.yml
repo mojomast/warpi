@@ -1,0 +1,175 @@
+# warpi-build.yml — build warpi artifacts on GitHub-hosted runners.
+#
+# Repository location: .github/workflows/warpi-build.yml
+#
+# ============================ VERIFICATION STATUS ============================
+# This workflow has NEVER run on a GitHub-hosted runner. Only the local
+# commands it mirrors have evidence (see standalone/VALIDATION.md):
+#   - npm ci / npm run build / npm test in standalone/pi-helper   (Linux)
+#   - cargo build -p warp --bin warpi --features gui              (debug, Linux)
+#   - cargo test -p standalone_agent                              (Linux)
+# Everything runner-specific below is UNVERIFIED, especially:
+#   * the entire windows-x86_64 job (Chocolatey protoc/cmake, MSVC build,
+#     PowerShell staging and zip). Its CARGO_BIN_NAME/WARP_APP_NAME and runtime
+#     payload handling follow standalone/WINDOWS.md, which was itself a Linux
+#     cross-compile probe, not a successful Windows build;
+#   * the release profile and apt package set on ubuntu-latest;
+#   * packaging/package-warpi.sh running in CI — its `npm ci --omit=dev
+#     --offline` path relies on a warm npm cache (setup-node's cache); if that
+#     fails the script falls back to copying the full node_modules;
+#   * third-party action pinning/caching behaviour.
+# ============================================================================
+
+name: warpi build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "warpi-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x86_64:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # UNVERIFIED: mirrors the prerequisites in standalone/BUILDING.md, but has
+      # not been exercised on a runner image.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler libasound2-dev cmake pkg-config build-essential
+
+      - name: Install Rust 1.92.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19"
+          cache: npm
+          cache-dependency-path: standalone/pi-helper/package-lock.json
+
+      - name: Build and test the Pi helper
+        working-directory: standalone/pi-helper
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Build warpi (release)
+        run: cargo build --locked -p warp --bin warpi --features gui --release
+
+      - name: Test the Rust adapter
+        run: cargo test -p standalone_agent
+
+      - name: Assemble and archive the Linux bundle
+        run: |
+          WARPI_BINARY="$PWD/target/release/warpi" bash packaging/package-warpi.sh
+          tar -C dist -czf "$PWD/dist/warpi-linux-x86_64.tar.gz" warpi-linux-x86_64
+          ls -lh dist
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warpi-linux-x86_64
+          path: dist/warpi-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-x86_64:
+    name: Windows x86_64
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # UNVERIFIED: Chocolatey package availability/versions on windows-latest
+      # have not been checked. cmake and MSVC ship with the runner but are
+      # installed/invoked explicitly here.
+      - name: Install build dependencies (protoc, cmake)
+        shell: pwsh
+        run: |
+          choco install protoc cmake -y --no-progress
+          protoc --version
+          cmake --version
+
+      - name: Install Rust 1.92.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19"
+          cache: npm
+          cache-dependency-path: standalone/pi-helper/package-lock.json
+
+      - name: Build and test the Pi helper
+        working-directory: standalone/pi-helper
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Build warpi (release)
+        shell: pwsh
+        env:
+          # On a Windows host app/build.rs embeds an icon/version resource. Cargo
+          # does not set CARGO_BIN_NAME for build scripts and the fork has no
+          # app/channels/warpi directory, so the oss channel assets are used;
+          # see standalone/WINDOWS.md section 3 (also unverified).
+          CARGO_BIN_NAME: oss
+          WARP_APP_NAME: Warpi
+        run: cargo build --locked -p warp --bin warpi --features gui --release
+
+      - name: Test the Rust adapter
+        shell: pwsh
+        run: cargo test -p standalone_agent
+
+      # UNVERIFIED: manual staging instead of packaging/package-warpi.sh, which
+      # targets Linux (uname, bash, install).
+      - name: Assemble the Windows bundle
+        shell: pwsh
+        run: |
+          $root = "dist/warpi-windows-x86_64"
+          $helper = "$root/standalone/pi-helper"
+          New-Item -ItemType Directory -Force -Path $helper | Out-Null
+          Copy-Item "target/release/warpi.exe" "$root/warpi.exe"
+          # The GUI needs the checked-in Windows payload next to the executable
+          # (conpty, DirectX shims, MSVC runtime); see standalone/WINDOWS.md.
+          Copy-Item "app/assets/windows/x64/*" "$root/"
+          Copy-Item "standalone/pi-helper/dist" "$helper/dist" -Recurse
+          Copy-Item "standalone/pi-helper/package.json" "$helper/package.json"
+          Copy-Item "standalone/pi-helper/package-lock.json" "$helper/package-lock.json"
+          Copy-Item "standalone/*.md" "$root/standalone/" -Force
+          Copy-Item "packaging/config.example.json" "$root/config.example.json"
+          Copy-Item "LICENSE-AGPL","LICENSE-MIT","LICENSE-NOTES.md" "$root/"
+          Push-Location $helper
+          npm ci --omit=dev --no-audit --no-fund
+          Pop-Location
+          Compress-Archive -Path "$root/*" -DestinationPath "dist/warpi-windows-x86_64.zip" -Force
+          Get-Item "dist/warpi-windows-x86_64.zip" | Format-List Length
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warpi-windows-x86_64
+          path: dist/warpi-windows-x86_64.zip
+          if-no-files-found: error
+          retention-days: 14
