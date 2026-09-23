@@ -127,7 +127,11 @@ requests fail with an explicit local error.
 - display name, base URL (for example `http://127.0.0.1:8080/v1`), model id,
   additional model ids (comma-separated), context and output limits;
 - authentication: `none`, or an API key that is written to the OS secret store
-  (macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service);
+  (macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service). On
+  Linux systems without a Secret Service provider (headless boxes, bare X
+  sessions) Warp's built-in fallback keeps the key in an AES-256-GCM-encrypted
+  file under the application state directory, mode `0600` — never in the config
+  file;
 - **Test connection**, which probes `GET {base}/models` with the profile's
   authentication mode and an 8-second timeout. A `404` is reported as
   reachable-with-note because v1 supports manual model ids.
@@ -245,9 +249,10 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
   version, `seq`, session/turn/exchange/generation identity, duplicate tool call
   ids, and foreign/stale tool results are all validated. Unknown or duplicate
   results are surfaced as protocol errors, never guessed.
-- **Credentials.** Stored in the OS secret store by reference; read into an
-  in-memory `SecretString` that redacts itself in `Debug`/`Display` and zeroizes
-  on drop. The key is not persisted in the helper's session files.
+- **Credentials.** Stored in the OS secret store by reference (or, on Linux
+  without a Secret Service, in Warp's encrypted `0600` fallback file under the
+  state directory); read into an in-memory `SecretString` that redacts itself in
+  `Debug`/`Display` and zeroizes on drop. The key is not persisted in the helper's session files.
 - **Unknown outcomes are surfaced, not repaired.** A crash after an effect but
   before its result is recorded leaves the outcome unknown; non-idempotent
   commands are never retried automatically. No exactly-once guarantee is
