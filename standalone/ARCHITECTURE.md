@@ -107,12 +107,13 @@ continues (or the user's next message supersedes the run).
   under `warpi/profile/<id>`), creates/deletes profiles, and runs a
   **Test connection** probe against `{base}/models`. A missing `/models`
   endpoint reports success-with-note, because v1 supports manual model ids.
-- **Model picker**: when standalone mode is enabled, `LLMPreferences` carries a
-  synthetic `LLMInfo` for the active profile (`standalone:<profile-id>`), so the
-  native model chip and picker show the local model instead of the cloud
-  default. Selecting another model changes only the label: standalone routing
-  always uses the configured profile. The entry refreshes immediately after a
-  save, without a restart.
+- **Model picker**: when standalone mode is enabled, every configured profile
+  contributes a synthetic `LLMInfo` (`standalone:<profile-id>`) to
+  `LLMPreferences`, so the native picker lists **all** configured models and the
+  model chip shows the one serving inference. Selecting a standalone model
+  switches the active profile, so the endpoint and model id really change; the
+  list refreshes immediately after a save, without a restart. Running turns
+  keep the endpoint they started on.
 - **Conversation identity**: `app/src/ai/standalone/mod.rs` generates a Warp
   task id for brand-new conversations (matching the real server's first
   `CreateTask`) and reuses it for every exchange; `CreateTask` is sent only when

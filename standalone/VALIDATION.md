@@ -36,6 +36,16 @@ isolation; cancellation; provider-failure classification; foreign/duplicate/
 stale tool results; new conversations with no task context; and the
 `CreateTask` gating fix (a server-backed task is never upgraded twice).
 
+**Real provider (adapter level, PASS)**: `cargo test -p standalone_agent
+--test real_provider` runs the full brokered loop against a live endpoint when
+`WARPI_REAL_PROVIDER_KEY` is set. Reproduced against DeepSeek with both
+`deepseek-flash` and `deepseek-v4-pro`:
+
+```
+real provider (deepseek-flash) final answer: RESULT=warpi-real-provider-marker
+test result: ok. 1 passed
+```
+
 Helper suites cover: protocol validation (version, size, order, UTF-8-safe
 truncation), broker semantics (batching, duplicates, oversized arguments,
 aborts), compaction settings, and four end-to-end provider scenarios including
@@ -51,6 +61,7 @@ no Warp server received agent traffic.
 | --- | --- | --- |
 | Native window, onboarding, terminal | **PASS** | `evidence/gui-native-window.png` |
 | Fresh agent conversation starts with the local model selected (`GUI Fixture (local endpoint · fixture-model)` in the model chip) | **PASS** | `evidence/gui-round-trip-complete.png` |
+| Native model selector lists the standalone model as selected and switching applies (auto ⇄ DeepSeek) | **PASS** | `evidence/gui-run/22-model-selector.png`, `23-select-auto.png`, `25-selector-reopen.png`, `26-back-to-deepseek.png` |
 | Prompt → local provider receives the brokered tool schema and returns a `bash` tool call | **PASS** | fixture captures: request 1 = `[system, user]`, tool schema = our six tools |
 | **Native tool approval card** ("OK if I run this command and read the output?", Reject/Edit/Run) | **PASS** | `evidence/gui-tool-approval.png` |
 | Click **Run** → the command executes in a normal Warp block | **PASS** | `evidence/gui-round-trip-complete.png` |
