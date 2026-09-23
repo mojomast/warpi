@@ -10,12 +10,11 @@ date-based tags (`v0.YYYY.MM.DD.HH.MM.channel_NN`). Bump these together:
 A release build may also set `GIT_RELEASE_TAG` at compile time; when present it takes
 precedence over `WARPI_VERSION` in About.
 
-## 0.1.0
+## 0.1.0 — 2026-09-23
 
 First public release. The verified platform is **Linux x86_64** (development
 build); Windows builds in CI but its Rust adapter test step is not green yet, and
 no signed installer ships. See the README's "Limitations and not-yet-verified".
-The release date is set when the tag is published.
 
 - Local agent backend against user-configured OpenAI-compatible endpoints, with no Warp
   account and no Warp servers required.
