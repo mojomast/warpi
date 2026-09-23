@@ -157,6 +157,9 @@ struct SessionState {
     create_task_sent: bool,
     turn: Option<TurnState>,
     open_ack: Option<oneshot::Sender<Result<SessionOpened, BridgeError>>>,
+    /// Last time the helper produced anything for this session. The stall
+    /// watchdog uses it to cancel turns whose provider went quiet.
+    last_activity: std::time::Instant,
 }
 
 enum Command {
@@ -382,6 +385,7 @@ impl Driver {
                 create_task_sent: false,
                 turn: None,
                 open_ack: None,
+                last_activity: std::time::Instant::now(),
             },
         );
         Ok(())
@@ -437,6 +441,7 @@ impl Driver {
         }
         if let Some(session) = self.sessions.get_mut(conversation_id) {
             session.create_task_sent = true;
+            session.last_activity = std::time::Instant::now();
             session.turn = Some(TurnState {
                 turn_id,
                 exchange_id,
@@ -459,6 +464,7 @@ impl Driver {
             let _ = reply.send(Err(BridgeError::SessionNotFound(conversation_id.to_string())));
             return;
         };
+        session.last_activity = std::time::Instant::now();
         let Some(turn) = session.turn.as_mut() else {
             let _ = reply.send(Err(BridgeError::HelperRejected(
                 "no active Pi turn to resume".to_string(),
@@ -564,6 +570,11 @@ impl Driver {
     }
 
     fn handle_frame(&mut self, frame: Envelope) {
+        if let Some(session_id) = frame.session_id.as_deref()
+            && let Some(session) = self.sessions.get_mut(session_id)
+        {
+            session.last_activity = std::time::Instant::now();
+        }
         let event = match HelperEvent::decode(&frame) {
             Ok(event) => event,
             Err(ProtocolError::UnknownKind(kind)) => {
@@ -712,6 +723,71 @@ impl Driver {
         }
     }
 
+    /// Expires turns whose helper went quiet for `timeout`: the turn stream is
+    /// failed with a timeout event and the session stops being busy, so the
+    /// next prompt is accepted instead of hitting `SessionBusy` forever.
+    ///
+    /// Turns with unresolved tool calls are skipped: those are idle because
+    /// they are waiting on the user's approval, not because the provider hung.
+    fn expire_stalled_turns(&mut self, timeout: std::time::Duration) -> Vec<String> {
+        let mut stalled = Vec::new();
+        for (conversation_id, session) in self.sessions.iter_mut() {
+            let stale = match session.turn.as_ref() {
+                Some(turn) => turn.pending.is_empty() && session.last_activity.elapsed() >= timeout,
+                None => false,
+            };
+            if !stale {
+                continue;
+            }
+            if let Some(turn) = session.turn.as_mut()
+                && let Some(stream) = turn.stream.take()
+            {
+                let _ = stream.send(BridgeEvent::ProtocolError {
+                    code: "timeout".to_string(),
+                    message: format!(
+                        "the provider produced no events for {}s, so the turn was cancelled; send the prompt again",
+                        timeout.as_secs()
+                    ),
+                });
+            }
+            session.turn = None;
+            stalled.push(conversation_id.clone());
+        }
+        stalled
+    }
+
+    /// Best-effort `turn.cancel` for a turn the watchdog already expired.
+    async fn cancel_stalled_turn(
+        &mut self,
+        helper: &mut HelperProcess,
+        conversation_id: &str,
+        reason: &str,
+    ) {
+        let Some((turn_id, exchange_id, generation)) =
+            self.sessions.get(conversation_id).and_then(|session| {
+                session.turn.as_ref().map(|turn| {
+                    (
+                        turn.turn_id.clone(),
+                        turn.exchange_id.clone(),
+                        session.generation,
+                    )
+                })
+            })
+        else {
+            return;
+        };
+        let identity = TurnIdentity {
+            session_id: conversation_id.to_string(),
+            turn_id,
+            exchange_id,
+            generation,
+        };
+        let frame = Envelope::new("turn.cancel", self.next_seq())
+            .with_identity(&identity)
+            .with_data(serde_json::json!({ "reason": reason }));
+        let _ = helper.send(&frame).await;
+    }
+
     fn fail_pending_opens(&mut self, error: BridgeError) {
         for session in self.sessions.values_mut() {
             if let Some(ack) = session.open_ack.take() {
@@ -738,6 +814,14 @@ impl Clone for BridgeError {
 }
 
 async fn driver_loop(mut helper: HelperProcess, mut commands: mpsc::UnboundedReceiver<Command>) {
+    // A turn whose provider goes quiet would otherwise stay "busy" forever and
+    // reject every later prompt. Overridable for tests/harnesses.
+    let stall_timeout = std::env::var("WARPI_TURN_STALL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(120));
+    let watchdog_tick = std::time::Duration::from_secs(5);
     let mut output_rx = helper.take_output();
     let mut driver = Driver { sessions: HashMap::new(), seq: 0, hello: None, hello_waiters: Vec::new() };
     if let Err(error) = driver.send_hello(&mut helper).await {
@@ -773,6 +857,13 @@ async fn driver_loop(mut helper: HelperProcess, mut commands: mpsc::UnboundedRec
                     }
                 }
             }
+            _ = tokio::time::sleep(watchdog_tick) => {
+                for conversation_id in driver.expire_stalled_turns(stall_timeout) {
+                    driver
+                        .cancel_stalled_turn(&mut helper, &conversation_id, "provider went quiet")
+                        .await;
+                }
+            }
             output = output_rx.recv() => {
                 let output = helper.observe(output);
                 let Some(output) = output else { break };
@@ -806,4 +897,81 @@ pub fn pi_data_dir(app_data_dir: &Path, workspace: &Path) -> PathBuf {
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "workspace".to_string());
     app_data_dir.join("pi-sessions").join(name)
+}
+
+#[cfg(test)]
+mod stall_watchdog_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn session_with_turn(
+        tx: mpsc::UnboundedSender<BridgeEvent>,
+        idle_for: Duration,
+    ) -> SessionState {
+        SessionState {
+            conversation_id: "c1".to_string(),
+            generation: 1,
+            task_id: String::new(),
+            provider_id: "p".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            session_file: None,
+            create_task: false,
+            create_task_sent: true,
+            turn: Some(TurnState {
+                turn_id: "t".to_string(),
+                exchange_id: "e".to_string(),
+                pending: BTreeMap::new(),
+                delivered: BTreeMap::new(),
+                stream: Some(tx),
+            }),
+            open_ack: None,
+            last_activity: Instant::now() - idle_for,
+        }
+    }
+
+    fn empty_driver() -> Driver {
+        Driver { sessions: HashMap::new(), seq: 0, hello: None, hello_waiters: Vec::new() }
+    }
+
+    #[test]
+    fn quiet_turns_are_expired_with_a_timeout_error() {
+        let mut driver = empty_driver();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        driver
+            .sessions
+            .insert("c1".to_string(), session_with_turn(tx, Duration::from_secs(300)));
+
+        let stalled = driver.expire_stalled_turns(Duration::from_secs(120));
+
+        assert_eq!(stalled, vec!["c1".to_string()]);
+        assert!(driver.sessions.get("c1").expect("session").turn.is_none());
+        match rx.try_recv() {
+            Ok(BridgeEvent::ProtocolError { code, message }) => {
+                assert_eq!(code, "timeout");
+                assert!(message.contains("no events"), "unexpected message: {message}");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn turns_waiting_for_tool_approval_are_not_expired() {
+        let mut driver = empty_driver();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut session = session_with_turn(tx, Duration::from_secs(300));
+        session.turn.as_mut().expect("turn").pending.insert(
+            "call_1".to_string(),
+            ToolCallSpec {
+                tool_call_id: "call_1".to_string(),
+                name: "bash".to_string(),
+                arguments: serde_json::json!({ "command": "ls" }),
+            },
+        );
+        driver.sessions.insert("c1".to_string(), session);
+
+        let stalled = driver.expire_stalled_turns(Duration::from_secs(120));
+
+        assert!(stalled.is_empty());
+        assert!(driver.sessions.get("c1").expect("session").turn.is_some());
+    }
 }
