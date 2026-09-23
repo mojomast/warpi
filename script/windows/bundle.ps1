@@ -11,7 +11,7 @@ Param (
     [ValidateSet('app', 'tui', 'cli')]
     [String]$ARTIFACT = 'app',
 
-    [ValidateSet('local', 'dev', 'preview', 'stable', 'oss')]
+    [ValidateSet('local', 'dev', 'preview', 'stable', 'warpi')]
     [String]$CHANNEL = 'dev',
 
     [Alias('release-tag')]
@@ -154,19 +154,20 @@ if ("$CHANNEL" -eq 'local') {
     $WARP_BIN = 'stable'
     $BINARY_NAME = 'warp.exe'
     $APP_NAME = 'Warp'
-} elseif ("$CHANNEL" -eq 'oss') {
-    $WARP_BIN = 'warp-oss'
-    $BINARY_NAME = 'warp-oss.exe'
-    $APP_NAME = 'WarpOss'
-    # The OSS channel does not ship Sentry, so drop the crash_reporting feature
-    # (which would otherwise pull in the Sentry SDK as a dependency).
+} elseif ("$CHANNEL" -eq 'warpi') {
+    $WARP_BIN = 'warpi'
+    $BINARY_NAME = 'warpi.exe'
+    $APP_NAME = 'Warpi'
+    # warpi serves inference from a user-configured local endpoint and ships no
+    # Sentry, so drop the crash_reporting feature (which would otherwise pull in
+    # the Sentry SDK as a dependency).
     $FEATURES = 'release_bundle,gui'
 }
 
 if ($IS_TUI) {
     $WARP_BIN = switch ($CHANNEL) {
         'local' { 'warp-tui' }
-        'oss' { 'warp-tui-oss' }
+        'warpi' { 'warpi-tui' }
         Default { "warp-tui-$CHANNEL" }
     }
     $BINARY_NAME = "$WARP_BIN.exe"
@@ -175,24 +176,24 @@ if ($IS_TUI) {
         'dev' { 'WarpAgentCLIDev' }
         'preview' { 'WarpAgentCLIPreview' }
         'stable' { 'WarpAgentCLI' }
-        'oss' { 'WarpAgentCLIOss' }
+        'warpi' { 'WarpiAgentCLI' }
     }
     $CLI_NAME = switch ($CHANNEL) {
         'local' { 'warp' }
         'dev' { 'warp-dev' }
         'preview' { 'warp-preview' }
         'stable' { 'warp' }
-        'oss' { 'warp-oss' }
+        'warpi' { 'warpi' }
     }
     $INSTALL_DIR_NAME = switch ($CHANNEL) {
         'local' { 'tui-local' }
         'dev' { 'tui-dev' }
         'preview' { 'tui-preview' }
         'stable' { 'tui' }
-        'oss' { 'tui-oss' }
+        'warpi' { 'tui-warpi' }
     }
     $FEATURES = 'release_bundle,standalone,voice_input'
-    if ("$CHANNEL" -ne 'oss') {
+    if ("$CHANNEL" -ne 'warpi') {
         $FEATURES = "$FEATURES,crash_reporting"
     }
 } elseif ($IS_CLI) {

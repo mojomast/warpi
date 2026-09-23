@@ -14,7 +14,7 @@ cross-target build got, what stops it, and what a real Windows build needs.
 | 2 | `cargo check -p standalone_agent --target x86_64-pc-windows-gnu` | **PASS** — exit 0, no errors, 20.57 s. |
 | 3 | `cargo check -p warp --bin warpi --features gui --target x86_64-pc-windows-gnu` | **FAIL** — exit 101. First real blocker: `aws-lc-sys` cannot find `x86_64-w64-mingw32-gcc`; a `--keep-going` run completes with 43 build-script failures (all native C/asm deps). |
 | 4 | Windows cross toolchain on this box | **None present**: no mingw-w64, no cargo-xwin/xwin, no `llvm-rc`/`windres`/`dlltool`, no clang/MSVC. |
-| 5 | Windows packaging scripts vs. the `warpi` rename | **Not updated**: `bundle.ps1` and `windows-installer.iss` still only know the upstream channels and the `warp-oss` binary/`WarpOss` app name. |
+| 5 | Windows packaging scripts vs. the `warpi` rename | **Updated 2026-09-23**: `bundle.ps1` and `windows-installer.iss` now carry the `warpi` channel (bin `warpi`, app `Warpi`, `warpi.cmd`, `Warpi` mutex); the installer is wired into CI but unbuilt/unverified. |
 | 6 | Pi helper (`standalone/pi-helper`) platform independence | **Yes at the JS level**: `dist/` is plain ESM JavaScript; native dependencies are prebuilt per-platform optional packages (win32 variants present in `package-lock.json`); no node-gyp build. Not executed on Windows. |
 | 7 | Disk headroom | Started at 12 GB free; ended at 7.4 GB after the full GUI run. Free space never approached the 1.5 GB abort threshold. |
 
@@ -142,10 +142,12 @@ Two further caveats that a `cargo check` cross-compile hides:
   host will. Note also that Cargo does **not** set `CARGO_BIN_NAME` for build
   scripts (verified with a scratch crate), so without `CARGO_BIN_NAME` set
   explicitly the resource step falls back to `channels/local/...` and embeds
-  the local-channel icon. The fork has no `app/channels/warpi/` icon directory;
+  the local-channel icon. As of 2026-09-23 the fork **does** have
+  `app/channels/warpi/icon/no-padding/icon.ico`, and
   `app/Cargo.toml`'s `[package.metadata.bundle.bin.warpi]` points at
-  `channels/oss/...`, so `CARGO_BIN_NAME=oss` is the value that matches the
-  fork's intent (this is what the CI snippet sets).
+  `channels/warpi/icon/icon.icns`, so `CARGO_BIN_NAME=warpi` (plus
+  `WARP_APP_NAME=Warpi`) is the value the Windows CI build and `bundle.ps1`'s
+  `warpi` channel now set.
 
 ## 4. Tooling this machine lacks
 
@@ -166,39 +168,51 @@ Two further caveats that a `cargo check` cross-compile hides:
 `dpkg -l | grep mingw` is empty, and this machine has no sudo, so a mingw-w64
 cross toolchain cannot be installed here with the approved workflow.
 
-## 5. Windows packaging scripts vs. the rename (not updated)
+## 5. Windows packaging scripts vs. the rename (updated 2026-09-23)
+
+This section originally recorded the stale state; the bundlers have since been
+updated. The probe results below are retained as history.
 
 `script/windows/bundle.ps1`:
-
-- `-Channel` accepts `local | dev | preview | stable | oss`. There is no `warpi`
-  or `Warpi` value.
-- The `oss` branch uses `$WARP_BIN = 'warp-oss'`, `$BINARY_NAME = 'warp-oss.exe'`,
-  `$APP_NAME = 'WarpOss'`. `app/Cargo.toml` has **no** `warp-oss` bin; the GUI
-  bin is `warpi` (`app/src/bin/warpi.rs`, `Channel::Warpi`). A `-Channel oss`
-  build would fail with "no bin target named `warp-oss`".
-- Other channels map to bins that still exist (`dev`, `preview`, `stable`,
-  `warp`), so the script would build the cloud-backed channels, not warpi.
+- `-Channel` now accepts `local | dev | preview | stable | warpi`; the stale
+  `oss` value is gone.
+- The `warpi` branch sets `$WARP_BIN = 'warpi'`, `$BINARY_NAME = 'warpi.exe'`,
+  `$APP_NAME = 'Warpi'`, `$FEATURES = 'release_bundle,gui'` (no Sentry). The GUI
+  bin `warpi` exists (`app/src/bin/warpi.rs`, `Channel::Warpi`).
+- The TUI switches use `warpi-tui` / `WarpiAgentCLI` / `CLI_NAME = 'warpi'` /
+  `tui-warpi`, matching `Channel::Warpi`'s command names.
 - The script sets `CARGO_BIN_NAME`/`WARP_APP_NAME` from the channel name, and
-  derives the installer name as `<AppName>Setup.exe`.
+  derives the installer name as `<AppName>Setup.exe` (so `WarpiSetup.exe`).
 
 `script/windows/windows-installer.iss`:
-
 - Defaults `MyAppExeName = "dev.exe"`, `ReleaseChannel = "dev"`.
 - Channel set in the preprocessor checks: `stable`, `dev`, `preview`, `local`,
-  `integration`, `oss` — no warpi.
-- `AppId=warp-terminal-{#ReleaseChannel}`; shortcut/AppUserModelID namespace
-  `dev.warp.{#MyAppName}`; registry key `SOFTWARE\Warp.dev\{#MyAppName}`;
-  CLI shims `warp-oss.cmd` / `oz-<channel>.cmd`.
+  `integration`, `warpi` — the `oss` branch was replaced by `warpi`, whose
+  mutex/`ChannelPascalCase` is `Warpi` (matching `single_instance_manager.rs`)
+  and whose CLI shim is `warpi.cmd` (matching `Channel::cli_command_name`).
+- The shortcut/AppUserModelID namespace now uses an `AppIdPrefix` that is
+  `dev.warpi` for warpi and `dev.warp` otherwise; the registry key remains
+  `SOFTWARE\Warp.dev\{#MyAppName}`.
 - It requires icons at `app\channels\{#ReleaseChannel}\icon\no-padding\icon.ico`
-  and payload DLLs from `app\assets\windows\{Arch}` (`conpty.dll`,
-  `OpenConsole.exe`, `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`,
-  `dxcompiler.dll`, `dxil.dll`). The `x64` and `arm64` payloads are checked in
-  (real PE binaries, not LFS pointers); `app/channels/` contains
-  `dev|local|oss|preview|stable`, no `warpi`.
+  (the `warpi` channel directory now exists) and payload DLLs from
+  `app\assets\windows\{Arch}`.
+- `[Files]` now also stages warpi's private Pi helper
+  (`standalone/pi-helper/{dist,package.json,package-lock.json,node_modules}`)
+  next to the executable with `skipifsourcedoesntexist`, so the installer can
+  resolve `{app}\standalone\pi-helper\dist\main.js`; the `resources\*` entry is
+  likewise skippable.
 
-Conclusion: before the fork can produce a Windows installer, both scripts need
-warpi entries (bin name, app name, channel dir/icon, AppId, shims). For a first
-Windows build the binary alone is enough; packaging is a separate change.
+As of 2026-09-23 `.github/workflows/warpi-build.yml` builds `WarpiSetup.exe`
+via Inno Setup on `windows-latest` from the staged bundle. **That installer has
+never been compiled or run** — this machine has no Inno Setup and no Windows —
+so it is wired-but-unverified. It is not Authenticode-signed; CI attaches a
+GitHub build-provenance attestation (not a signature) to the uploaded file.
+
+
+Conclusion (updated 2026-09-23): the warpi entries the first probe called for
+are now in both scripts, and the CI job builds the installer. What remains is
+not script work but verification: the installer has never been compiled or run
+without a Windows host, and it is unsigned (provenance-attested instead).
 
 ## 6. Pi helper platform independence
 

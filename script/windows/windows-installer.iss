@@ -28,9 +28,19 @@
   ((ReleaseChannel == "preview") ? "Preview" : \
   ((ReleaseChannel == "local") ? "Local" : \
   ((ReleaseChannel == "integration") ? "Integration" : \
-  ((ReleaseChannel == "oss") ? "Oss" : \
+  ((ReleaseChannel == "warpi") ? "Warpi" : \
   "Unknown")))))
 #define AppMutexName "Local\Warp" + ChannelPascalCase + "_SingleInstance"
+
+; warpi registers its bundle id under dev.warpi.Warpi; every other channel uses
+; the upstream dev.warp.* namespace.
+#ifndef AppIdPrefix
+  #if ReleaseChannel == "warpi"
+    #define AppIdPrefix "dev.warpi"
+  #else
+    #define AppIdPrefix "dev.warp"
+  #endif
+#endif
 
 
 [Setup]
@@ -105,7 +115,15 @@ Source: "{#AssetsDir}\{#Arch}\msvcp140.dll"; DestDir: "{app}"
 Source: "..\..\app\assets\bundled\bootstrap\pwsh.ps1"; DestDir: "{app}"
 Source: "{#AssetsDir}\{#Arch}\dxcompiler.dll"; DestDir: "{app}"
 Source: "{#AssetsDir}\{#Arch}\dxil.dll"; DestDir: "{app}"
-Source: "{#TargetProfileDir}\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs
+Source: "{#TargetProfileDir}\resources\*"; DestDir: "{app}\resources"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
+; warpi's private Pi helper. It is spawned as a separate Node process and is
+; resolved next to the executable (standalone/pi-helper/dist/main.js), so the
+; installer must place it alongside warpi.exe. These sources only exist when
+; the warpi channel staged them; otherwise they are skipped.
+Source: "{#TargetProfileDir}\standalone\pi-helper\dist\*"; DestDir: "{app}\standalone\pi-helper\dist"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#TargetProfileDir}\standalone\pi-helper\package.json"; DestDir: "{app}\standalone\pi-helper"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#TargetProfileDir}\standalone\pi-helper\package-lock.json"; DestDir: "{app}\standalone\pi-helper"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#TargetProfileDir}\standalone\pi-helper\node_modules\*"; DestDir: "{app}\standalone\pi-helper\node_modules"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Registry]
 Root: HKCU; Subkey: "SOFTWARE\Warp.dev\{#MyAppName}"; Flags: uninsdeletekey
@@ -140,8 +158,8 @@ Type: filesandordirs; Name: "{localappdata}\warp\{#MyAppName}"
 Type: filesandordirs; Name: "{app}\bin"
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "dev.warp.{#MyAppName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "dev.warp.{#MyAppName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "{#AppIdPrefix}.{#MyAppName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "{#AppIdPrefix}.{#MyAppName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall runhidden nowait
@@ -245,8 +263,8 @@ begin
       `Channel::cli_command_name` in the Rust source. }
 #if ReleaseChannel == "stable"
     CmdScriptName := 'oz.cmd'
-#elif ReleaseChannel == "oss"
-    CmdScriptName := 'warp-oss.cmd';
+#elif ReleaseChannel == "warpi"
+    CmdScriptName := 'warpi.cmd';
 #else
     CmdScriptName := 'oz-{#ReleaseChannel}.cmd';
 #endif

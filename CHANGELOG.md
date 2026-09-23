@@ -12,9 +12,15 @@ precedence over `WARPI_VERSION` in About.
 
 ## 0.1.0 — 2026-09-23
 
-First public release. The verified platform is **Linux x86_64** (development
-build); Windows builds in CI but its Rust adapter test step is not green yet, and
-no signed installer ships. See the README's "Limitations and not-yet-verified".
+First public release. CI produces installable artifacts for **Linux x86_64 and
+Windows x86_64** — the Linux `warpi-linux-x86_64.tar.gz` (with a `.sha256`) and
+the Windows `WarpiSetup.exe` — each accompanied by a GitHub **build-provenance
+attestation** rather than code signing; there is no Authenticode certificate and
+no GPG key. The Windows adapter test step is **scoped**: the known-failing
+`session_isolation` suite is ignored on Windows while every other adapter failure
+still turns the job red. The fixture's root cause remains **unverified**, and the
+Windows installer has not been compiled or run locally. See the README's
+"Limitations and not-yet-verified".
 
 - Local agent backend against user-configured OpenAI-compatible endpoints, with no Warp
   account and no Warp servers required.

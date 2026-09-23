@@ -166,11 +166,23 @@ final   : "Warpi round trip complete."
    compaction longer than 600 s still cancels the turn; and helper shutdown on
    app teardown is best-effort (`try_lock`, and a session whose lock is held is
    skipped).
-6. **Packaging is not updated for the rename.** `script/linux/*` and
-   `script/windows/*` bundlers still contain the old `oss` channel case; the
-   development entrypoints (`script/run`, `script/run-tui`) and the CI check
-   job were updated. `packaging/package-warpi.sh` is a no-sudo development
-   bundle, not a signed release. Release bundling is M5 work.
+6. **Packaging (updated 2026-09-23).** `script/linux/*` and `script/windows/*`
+   no longer carry the stale `oss` channel case: the `warp-oss`/`WarpOss`
+   mappings were replaced with the `warpi` channel (binary `warpi`/`warpi-tui`,
+   app name `Warpi`, bundle id `dev.warpi.Warpi`), and the Inno Setup
+   channel/mutex/CLI-script naming now matches `Channel::Warpi`. The shipping
+   Linux artifact is the portable `packaging/package-warpi.sh` directory,
+   archived to `warpi-linux-x86_64.tar.gz`, with the no-sudo `packaging/install.sh`;
+   this bundle was built and installed and its binary run on the Linux audit
+   machine (`warpi --version`). It is **not signed** — the workflow wires
+   GitHub build-provenance attestations (`actions/attest-build-provenance`) for
+   the uploaded artifacts, which is provenance, not Authenticode or GPG (no
+   signing certificate or key exists). The Windows `.zip` remains a manual
+   staging step, and the Inno Setup installer is wired into the Windows CI job
+   but has never been compiled or run here (no Inno Setup on this box); both
+   Windows artifacts are CI-only and unverified. The generic
+   AppImage/.deb/.rpm bundlers are not used for warpi because they do not ship
+   the Node Pi helper that warpi spawns.
 7. **Compile warnings remain** (5 in the app crate at the last check: an unused
    standalone helper, a deprecated proto field, and dead-code notes). None affect
    behaviour; not re-checked for the current tree.
