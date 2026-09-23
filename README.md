@@ -11,11 +11,12 @@ execution paths stay in charge of every workspace side effect. No Warp account i
 required, and no Warp server sits in the agent path.
 
 Status: early development, validated as a **Linux x86_64 development build**.
-The agent adapter is validated end-to-end against a real hosted provider
-(DeepSeek); driving that provider through the GUI is **in progress** and is not
-claimed. There is no signed installer or release bundle yet. Every claim below
-traces to a test, a screenshot, or an explicit **not verified** / **not run**
-marker.
+The multi-profile model picker and per-model enable/disable are verified in the
+native GUI, and the agent adapter is validated end-to-end against a real hosted
+provider (DeepSeek). Driving that provider through the GUI is **pending** and
+is not claimed. There is no signed installer or release bundle yet. Every claim
+below traces to a test, a screenshot, or an explicit **not verified** /
+**not run** marker.
 
 History: this repository imports upstream Warp at
 `71088ba18d27114ccfb358901c66b54220cf30d0` and replays the fork commits from
@@ -30,11 +31,13 @@ environment variables), so stock Warp and warpi can coexist on one machine.
 | Native Warp GUI on Linux x86_64 (development build) | **Verified** | window renders under Xvfb + Mesa lavapipe: `standalone/evidence/gui-native-window.png` |
 | End-to-end agent round trip: prompt → local provider → native tool approval card → Run → command output → result back to Pi → second provider request → final text | **Verified** (deterministic loopback fixture) | `standalone/evidence/gui-tool-approval.png`, `gui-round-trip-complete.png`; fixture request captures |
 | Provider settings page (Settings → Agents → Local Pi provider) and **Test connection** (`GET {base}/models`) | **Verified** | `standalone/evidence/gui-provider-settings.png`, `gui-test-connection.png` |
+| Native model picker: every enabled model of every configured provider appears as `standalone:<profile>\|<model>`; selecting one switches the active profile and the model id requests use | **Verified** (GUI, deterministic fixture plus a configured DeepSeek profile) | `standalone/evidence/gui-model-picker-all-providers.png` |
+| Per-model enable/disable in the settings page, persisted per profile as `disabled_models`: disabled models never appear in the picker, and the model in use cannot be disabled | **Verified** (GUI) | `standalone/evidence/gui-model-toggle.png` |
 | `auth = none` sends no `Authorization` header and never leaks the helper's internal placeholder | **Verified** (automated) | `auth_none_never_sends_an_authorization_header` in `crates/standalone_agent/tests/vertical_slice.rs` |
-| Rust backend | **25 tests** — 24 always-on (14 unit + 1 session-isolation + 9 vertical slice) plus an opt-in real-provider adapter test that records `NOT RUN` without credentials | `cargo test -p standalone_agent`; `cargo test -p standalone_agent --test real_provider` |
+| Rust backend | **25 tests** (`cargo test -p standalone_agent`): 14 unit + 1 session-isolation + 9 vertical slice + 1 opt-in real-provider adapter test that reports `NOT RUN` and passes without credentials | `cargo test -p standalone_agent`; `cargo test -p standalone_agent --test real_provider` |
 | Pi helper | **13 tests passing** | `cd standalone/pi-helper && npm test` |
 | Real (hosted) provider — **adapter level**, DeepSeek `deepseek-flash` and `deepseek-v4-pro` | **Verified (PASS)**: prompt → provider tool call → brokered workspace call → resume with the real tool output → second provider request → final answer containing the marker | `WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider` (`crates/standalone_agent/tests/real_provider.rs`) |
-| Real (hosted) provider — **driven through the GUI** | **In progress (not claimed yet)** — being run by the coordinator as this repository is assembled | — |
+| Real (hosted) provider — **driven through the GUI** | **Pending — not claimed.** The adapter-level pass is in the row above; a full hosted-provider round trip has not been driven through the GUI yet | — |
 | Windows / macOS native build and GUI | **Not verified.** The backend crate passes `cargo check --target x86_64-pc-windows-gnu`, but the GUI cross-build is blocked by native C/asm dependencies (`aws-lc-sys`, SQLite, tree-sitter, …) with no cross C toolchain; a real Windows runner is the path. The GitHub Actions job has not run yet | `standalone/WINDOWS.md`, `.github/workflows/warpi-build.yml`, `standalone/ci/warpi-windows-job.md` |
 | Diff review / file-edit (`write`/`edit`) flow driven in the GUI | **Not yet driven in the GUI** (wired to `ApplyFileDiffs` and tested at the event level) | `standalone/VALIDATION.md` |
 | Conversation restart / idle restore driven in the GUI | **Not yet driven in the GUI** (durable conversation → Pi session mapping exists) | `standalone/VALIDATION.md` |
@@ -122,15 +125,25 @@ requests fail with an explicit local error.
 **Settings → Agents → Local Pi provider** and fill in:
 
 - display name, base URL (for example `http://127.0.0.1:8080/v1`), model id,
-  context and output limits;
+  additional model ids (comma-separated), context and output limits;
 - authentication: `none`, or an API key that is written to the OS secret store
   (macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service);
 - **Test connection**, which probes `GET {base}/models` with the profile's
   authentication mode and an 8-second timeout. A `404` is reported as
   reachable-with-note because v1 supports manual model ids.
 
-The active profile appears in the native model chip; saving refreshes it
-without a restart. The standalone toggle lives on the same page.
+Every enabled model of every configured profile appears in the native model
+picker as `standalone:<profile>|<model>` (for example
+`standalone:deepseek|deepseek-v4-pro`). Picking one switches the active profile
+and the model id that requests use, so both the endpoint and the wire model
+really change; running turns keep the endpoint they started on, and the model
+chip follows the selection.
+
+The same page lists the active profile's models with an enable/disable toggle.
+Disabled models are persisted per profile as `disabled_models`, never appear in
+the picker, and the model currently in use cannot be disabled (pick another
+model first). Saving a profile or toggling a model refreshes the picker without
+a restart. The standalone on/off toggle lives on the same page.
 
 **Or write the config file by hand.** Linux default:
 `~/.local/share/warpi/standalone/config.json` (`$XDG_DATA_HOME/warpi/...` when
@@ -147,6 +160,8 @@ no authentication (see `standalone/BUILDING.md` for the API-key form):
       "base_url": "http://127.0.0.1:8080/v1",
       "wire": "open_ai_chat_completions",
       "model_id": "qwen3-coder-30b",
+      "models": [],
+      "disabled_models": [],
       "credential": "none",
       "context_limit": 131072,
       "output_limit": 8192,
@@ -162,9 +177,12 @@ no authentication (see `standalone/BUILDING.md` for the API-key form):
 ```
 
 `wire` only accepts `open_ai_chat_completions`; the older single-`profile`
-form is still read. Credentials can also be written with the platform tool under
-the key `warpi/profile/<profile-id>`; the value is read at first use and kept in
-memory only.
+form is still read. `models` lists further selectable ids for the same endpoint
+(the UI takes them comma-separated), and `disabled_models` records the ids
+switched off in the settings page; the picker offers `model_id` plus every
+`models` entry that is not disabled. Credentials can also be written with the
+platform tool under the key `warpi/profile/<profile-id>`; the value is read at
+first use and kept in memory only.
 
 **Packaged development bundle (optional).** Instead of running from
 `target/debug/`, assemble a self-contained directory and install it without
@@ -201,7 +219,7 @@ free to redistribute under the author's terms, with one hard condition:
 | Context/output limits | Required, user-entered. No provider model catalog is consulted and no catalog network request is made. |
 | Test connection | `2xx` = reachable; `404` = reachable with a note (`/models` is optional); `401`/`403`/`5xx` = failure with status; DNS/connection/timeout = failure with the transport error. |
 | Fallback | None in either direction. Standalone requests never reach Warp servers, and a failing local endpoint is reported as a local error. |
-| Verified against a real endpoint | **Adapter level: YES** (DeepSeek `deepseek-flash` and `deepseek-v4-pro`, tool-call round trip; see the top table). GUI real-provider validation is **in progress** and not claimed. Other providers are unverified; the compatibility tests themselves still use the deterministic loopback fixture. |
+| Verified against a real endpoint | **Adapter level: YES** (DeepSeek `deepseek-flash` and `deepseek-v4-pro`, tool-call round trip; see the top table). GUI real-provider validation is **pending** and not claimed. Other providers are unverified; the compatibility tests themselves still use the deterministic loopback fixture. |
 
 Full tables, including the six tools offered to the model and the exact
 reject-vs-approximate rules, are in `standalone/PROVIDER_COMPATIBILITY.md`.
@@ -284,7 +302,7 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
 ## Testing
 
 ```bash
-cargo test -p standalone_agent                  # 24 tests: 14 unit + 1 session isolation + 9 vertical slice
+cargo test -p standalone_agent                  # 25 tests: 14 unit + 1 session isolation + 9 vertical slice + 1 opt-in real-provider test (NOT RUN without a key)
 cd standalone/pi-helper && npm test             # 13 tests
 cargo check -p warp --bin warpi --features gui  # app compile
 cargo check -p warp --tests --features gui      # app test targets compile
@@ -312,11 +330,12 @@ executed by the test (the equivalent of Warp running the approved command).
 - **Real-provider validation**: the adapter-level round trip against DeepSeek
   (`deepseek-flash`, `deepseek-v4-pro`) is **PASS** (top table; rerun with
   `WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider`).
-  The same provider flow driven through the GUI is **in progress** and not
-  claimed, and no coding-performance claim is made. Other hosted providers are
-  unverified. Note: `standalone/VALIDATION.md` was written before the adapter
-  test existed and still lists the real provider as "NOT RUN"; the README table
-  and the test file are the current evidence.
+  The same provider flow driven through the GUI is **pending** and not claimed,
+  and no coding-performance claim is made. Other hosted providers are
+  unverified. `standalone/VALIDATION.md` records the adapter-level PASS in its
+  automated-tests section, but its "Not run" table and risk register still carry
+  the earlier "no real provider run" wording; the README table and the test file
+  are the current evidence.
 - **Diff review**: `write`/`edit` map to `ApplyFileDiffs` and are unit-tested at
   the event level, but the approval/diff flow has not been driven in the GUI.
 - **Restart**: the conversation → Pi session mapping is durable; restart/idle

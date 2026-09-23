@@ -6,11 +6,17 @@ Text logs and screenshots captured on the audit machine (Linux x86_64,
 
 | File | What it shows |
 | --- | --- |
-| `rust-tests.log` | `cargo test -p standalone_agent`: 22 tests, 0 failures (14 unit + 8 integration, including the M1 vertical slice and session isolation). |
+| `rust-tests.log` | `cargo test -p standalone_agent`: 24 tests, 0 failures (14 unit + 1 session isolation + 9 vertical slice) — captured before the multi-model picker work; the current suite is 25 tests, including the opt-in real-provider test that reports `NOT RUN` without credentials. |
 | `helper-tests.log` | `node --import tsx --test test/*.test.ts` in `standalone/pi-helper`: 13 tests, 0 failures. |
 | `gui-build.log` | `cargo build -p warp --bin warp-oss --features gui`: success in 4m10s, two non-behavioural warnings. |
 | `gui-native-window.png` | The native Warp GUI running under Xvfb + Mesa lavapipe with the standalone config loaded (universal input, agent conversation hint). |
 | `gui-typed-input.png` | Injected keyboard input reaching the native window (a shell command executed in a Warp block). |
+| `gui-provider-settings.png` | Settings → Agents → **Local Pi provider** with a configured DeepSeek profile. |
+| `gui-test-connection.png` | **Test connection** against the configured endpoint (`GET /v1/models`). |
+| `gui-tool-approval.png` | Native tool approval card for the agent's shell command. |
+| `gui-round-trip-complete.png` | Completed agent round trip: command block, output, and the final assistant text. |
+| `gui-model-picker-all-providers.png` | Native model picker listing every enabled model of every configured profile (`DeepSeek · deepseek-flash`, `DeepSeek · deepseek-v4-pro`, `Local fixture`). |
+| `gui-model-toggle.png` | Settings page after `deepseek-v4-pro` was disabled: only `deepseek-flash` remains offered in the picker. |
 
 Additional working-tree artifacts (not committed, they are bulky or noisy):
 
@@ -19,3 +25,6 @@ Additional working-tree artifacts (not committed, they are bulky or noisy):
 - `/home/mojo/projects/warp2/evidence/gui-run/captures.json` — fixture provider
   request captures (0 requests in the final run: the agent conversation was
   never started from the GUI; see `VALIDATION.md` risk 1).
+- `/home/mojo/projects/warp2/evidence/warpi-gui/*.png` — multi-profile picker
+  session; the two `gui-model-*` screenshots above are copies of
+  `31-all-models.png` and `34-disabled-model-hidden.png`.
