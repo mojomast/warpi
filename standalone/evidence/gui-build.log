@@ -1,5 +1,5 @@
-   Compiling standalone_agent v0.1.0 (/home/mojo/projects/warp2/warp/crates/standalone_agent)
-   Compiling warp v0.1.0 (/home/mojo/projects/warp2/warp/app)
+   Compiling standalone_agent v0.1.0 (<repo>/crates/standalone_agent)
+   Compiling warp v0.1.0 (<repo>/app)
 warning: method `profile` is never used
    --> app/src/ai/standalone/mod.rs:102:12
     |

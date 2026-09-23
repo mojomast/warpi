@@ -23,3 +23,5 @@ fixture provider request captures) are not committed because they are bulky or
 noisy; the files above are the ones `VALIDATION.md` cites. The two
 `gui-model-*` screenshots are copies of the more detailed picker captures from
 that run.
+
+Build/test logs have machine-local absolute paths replaced with `<repo>`/`<home>` before publication.

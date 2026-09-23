@@ -1,4 +1,4 @@
-   Compiling standalone_agent v0.1.0 (/home/mojo/projects/warp2/warp/crates/standalone_agent)
+   Compiling standalone_agent v0.1.0 (<repo>/crates/standalone_agent)
 warning: constant `FIXTURE_STEPS_KEY` is never used
   --> crates/standalone_agent/tests/support/mod.rs:15:11
    |
