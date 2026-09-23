@@ -1,10 +1,10 @@
 # Pi SDK ground truth — `@earendil-works/pi-coding-agent@0.84.2`
 
-Verified against the **installed** package in `/home/mojo/projects/warp2/pi-helper`,
+Verified against the **installed** package in `<pi-helper checkout>`,
 not against older `@mariozechner/*` docs. Date: 2026-09-23, Node `v22.19.0`.
 
 Paths below are relative to
-`/home/mojo/projects/warp2/pi-helper/node_modules/@earendil-works/pi-coding-agent/`
+`<pi-helper checkout>/node_modules/@earendil-works/pi-coding-agent/`
 unless stated otherwise. Dependency versions: `pi-helper/DEPENDENCY-TREE.md`.
 
 A working smoke test lives at `pi-helper/smoke.mjs` (run with

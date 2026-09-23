@@ -1,6 +1,6 @@
 # Windows build status for warpi
 
-Probe run on the Linux audit machine (`/home/mojo/projects/warp2/warp`, revision
+Probe run on the Linux audit machine (`<fork checkout>`, revision
 `e2f3c50d0fd02b96336c9aa86eedfe7f86aed6f7`) on 2026-09-23, using the shim
 environment `standalone/dev-env.sh`. **No Windows binary was produced and no
 Windows code was executed on this machine.** This document records how far a
@@ -31,7 +31,7 @@ $ rustup show
 active toolchain
 ----------------
 name: 1.92.0-x86_64-unknown-linux-gnu
-active because: overridden by '/home/mojo/projects/warp2/warp/rust-toolchain.toml'
+active because: overridden by '<fork checkout>/rust-toolchain.toml'
 installed targets:
   x86_64-unknown-linux-gnu
 ```
@@ -79,7 +79,7 @@ repository pins.
 ```
 $ source standalone/dev-env.sh
 $ cargo check -p standalone_agent --target x86_64-pc-windows-gnu
-    Checking standalone_agent v0.1.0 (/home/mojo/projects/warp2/warp/crates/standalone_agent)
+    Checking standalone_agent v0.1.0 (<fork checkout>/crates/standalone_agent)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.57s
 $ echo $?
 0
@@ -286,7 +286,7 @@ expect.
 ## Reproduce
 
 ```bash
-cd /home/mojo/projects/warp2/warp
+cd <fork checkout>
 source standalone/dev-env.sh
 
 # 1. target availability
