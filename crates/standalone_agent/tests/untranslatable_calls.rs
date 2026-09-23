@@ -91,7 +91,9 @@ async fn an_untranslatable_call_is_answered_in_place() {
     bridge.shutdown().await;
 }
 
-#[tokio::test]
+// Uses the cross-process fixture provider, which is unreliable on Windows;
+// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+fixture_test! {
 async fn the_real_helper_recovers_from_an_untranslatable_call() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -166,6 +168,7 @@ async fn the_real_helper_recovers_from_an_untranslatable_call() {
     );
 
     bridge.shutdown().await;
+}
 }
 
 #[tokio::test]

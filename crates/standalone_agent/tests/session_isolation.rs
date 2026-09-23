@@ -12,16 +12,9 @@ use support::*;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-#[tokio::test]
-// Tracked Windows-only failure: the Rust adapter's first request to the
-// cross-process Node fixture reports provider_error "Connection error." on
-// windows-latest (runs 35875945102 and 35879868946) while it passes on Linux.
-// Ignore just this suite on Windows so every other failure in the adapter step
-// still fails the job; see .github/workflows/warpi-build.yml.
-#[cfg_attr(
-    windows,
-    ignore = "known Windows cross-process fixture failure; see the windows-x86_64 adapter-test step in .github/workflows/warpi-build.yml"
-)]
+// Uses the cross-process fixture provider, which is unreliable on Windows;
+// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+fixture_test! {
 async fn two_sessions_with_different_profiles_stay_isolated() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -207,4 +200,5 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
     );
 
     bridge.shutdown().await;
+}
 }

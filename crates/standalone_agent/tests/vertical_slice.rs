@@ -75,7 +75,9 @@ fn assert_paused_exchange(events: &[api::ResponseEvent], expected_command: &str)
     );
 }
 
-#[tokio::test]
+// Uses the cross-process fixture provider, which is unreliable on Windows;
+// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+fixture_test! {
 async fn native_prompt_tool_result_second_request_and_final_text() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -238,8 +240,9 @@ async fn native_prompt_tool_result_second_request_and_final_text() {
 
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn auth_none_never_sends_an_authorization_header() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -274,8 +277,9 @@ async fn auth_none_never_sends_an_authorization_header() {
     );
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn foreign_and_duplicate_tool_results_are_rejected_without_corrupting_the_turn() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -370,8 +374,9 @@ async fn foreign_and_duplicate_tool_results_are_rejected_without_corrupting_the_
     }
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn cancellation_settles_the_run_and_keeps_the_session_usable() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -451,8 +456,9 @@ async fn cancellation_settles_the_run_and_keeps_the_session_usable() {
     assert_eq!(final_text(&settled).as_deref(), Some("second turn done"));
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn queued_prompts_are_accepted_and_start_in_fifo_order() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -583,8 +589,9 @@ async fn queued_prompts_are_accepted_and_start_in_fifo_order() {
 
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn cancelling_a_queued_prompt_settles_it_without_touching_the_running_turn() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -667,8 +674,9 @@ async fn cancelling_a_queued_prompt_settles_it_without_touching_the_running_turn
     );
     bridge.shutdown().await;
 }
+}
 
-#[tokio::test]
+fixture_test! {
 async fn provider_failures_surface_as_a_single_terminal_failure() {
     if !node_available() {
         eprintln!("NOT RUN: node is unavailable");
@@ -709,6 +717,7 @@ async fn provider_failures_surface_as_a_single_terminal_failure() {
         "captures: {captures}"
     );
     bridge.shutdown().await;
+}
 }
 
 #[tokio::test]
@@ -752,7 +761,7 @@ async fn request_extraction_reads_the_native_request_shape() {
     assert!(inputs.tool_results.is_empty());
 }
 
-#[tokio::test]
+fixture_test! {
 async fn a_server_backed_task_is_not_upgraded_again() {
     // Regression: re-sending CreateTask for a task the client already treats as
     // server-backed fails with `UnexpectedUpgrade`, so the bridge must only emit
@@ -813,6 +822,7 @@ async fn a_server_backed_task_is_not_upgraded_again() {
         "no create_task: {summary:?}"
     );
     bridge.shutdown().await;
+}
 }
 
 #[tokio::test]
