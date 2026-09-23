@@ -1,0 +1,365 @@
+//! The M1 vertical slice, end to end, at the Warp event boundary:
+//!
+//! native request -> fixture HTTP provider -> Pi tool call -> brokered Warp
+//! tool call -> Warp result -> SAME Pi turn resumes -> second provider request
+//! -> final text -> Warp events.
+//!
+//! Everything except the Warp UI itself is real: the shipped helper binary
+//! (Node + pinned Pi SDK), the stdio protocol, the Rust bridge, the Warp
+//! protobuf event translation, and the deterministic provider HTTP fixture.
+
+mod support;
+
+use std::time::Duration;
+
+use standalone_agent::bridge::{BridgeEvent, StandaloneBridge};
+use standalone_agent::protocol::HelperToolResultStatus;
+use standalone_agent::warp_events::{ExchangeWriter, RequestInputs, extract_request_inputs, summarize_events};
+use support::*;
+use warp_multi_agent_api as api;
+
+const TIMEOUT: Duration = Duration::from_secs(30);
+
+fn writer_for(inputs: &RequestInputs, request_id: &str, run_id: &str) -> ExchangeWriter {
+    ExchangeWriter::new(inputs.task_id.clone(), inputs, request_id.to_string(), run_id.to_string())
+}
+
+/// Assert the Warp event stream for the first (paused) exchange.
+fn assert_paused_exchange(events: &[api::ResponseEvent], expected_command: &str) {
+    let summary = summarize_events(events);
+    assert_eq!(
+        summary,
+        vec!["init", "create_task", "add_messages", "finished"],
+        "exchange event order"
+    );
+
+    let tool_message = events
+        .iter()
+        .find_map(|event| match event.r#type.as_ref() {
+            Some(api::response_event::Type::ClientActions(actions)) => actions.actions.iter().find_map(|action| {
+                match action.action.as_ref() {
+                    Some(api::client_action::Action::AddMessagesToTask(add)) => add.messages.first().cloned(),
+                    _ => None,
+                }
+            }),
+            _ => None,
+        })
+        .expect("a tool-call message exists");
+    let tool_call = tool_message.message.as_ref().expect("message payload");
+    let api::message::Message::ToolCall(call) = tool_call else {
+        panic!("expected a tool call, got {tool_call:?}");
+    };
+    assert_eq!(call.tool_call_id, "call_abc");
+    let Some(api::message::tool_call::Tool::RunShellCommand(shell)) = call.tool.as_ref() else {
+        panic!("expected a shell tool call");
+    };
+    assert_eq!(shell.command, expected_command);
+    assert!(!shell.is_read_only, "read-only must not be assumed from the model");
+    assert_eq!(
+        shell.risk_category,
+        api::RiskCategory::NontrivialLocalChange as i32,
+        "shell calls are classified for the approval path"
+    );
+}
+
+#[tokio::test]
+async fn native_prompt_tool_result_second_request_and_final_text() {
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([
+        {
+            "kind": "tool_call",
+            "toolCallId": "call_abc",
+            "toolName": "bash",
+            "argumentChunks": ["{\"comm", "and\":", "\"echo hel", "lo\"}"]
+        },
+        { "kind": "text", "chunks": ["all", " done"] }
+    ]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge: StandaloneBridge =
+        spawn_bridge(dir.path(), profile(&fixture.base_url, true), Some("sk-fixture")).await;
+
+    // Exchange 1: user query -> Pi pauses on our custom `bash` tool.
+    let mut stream = bridge.start_turn("conv-1", "run echo hello".to_string()).await.expect("turn starts");
+    let paused = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+    let calls = tool_calls(&paused);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].tool_call_id, "call_abc");
+    assert_eq!(calls[0].name, "workspace.shell");
+    assert_eq!(calls[0].arguments["command"], "echo hello");
+
+    let inputs = RequestInputs {
+        conversation_id: "conv-1".into(),
+        task_id: "conv-1".into(),
+        ..Default::default()
+    };
+    let mut writer = writer_for(&inputs, "req-1", "run-1");
+    let warp_events: Vec<api::ResponseEvent> = paused.iter().flat_map(|event| writer.write(event)).collect();
+    assert_paused_exchange(&warp_events, "echo hello");
+
+    // Exchange 2: the Warp tool result resumes the SAME Pi turn.
+    let mut stream = bridge
+        .resume_turn(
+            "conv-1",
+            vec![tool_call("call_abc", HelperToolResultStatus::Success, "hello\n")],
+        )
+        .await
+        .expect("resume accepted");
+    let settled = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+    assert_eq!(text_deltas(&settled), "all done");
+    assert_eq!(final_text(&settled).as_deref(), Some("all done"));
+    let settled_usage = usage(&settled).expect("usage recorded");
+    assert!(settled_usage.input_tokens > 0);
+
+    let mut writer = writer_for(&inputs, "req-2", "run-1");
+    let warp_events: Vec<api::ResponseEvent> = settled.iter().flat_map(|event| writer.write(event)).collect();
+    let summary = summarize_events(&warp_events);
+    assert_eq!(summary.first().map(String::as_str), Some("init"));
+    assert!(
+        summary.iter().filter(|entry| *entry == "add_messages").count() == 1,
+        "first delta creates exactly one message: {summary:?}"
+    );
+    assert!(
+        summary.iter().filter(|entry| *entry == "append_text").count() == 1,
+        "second delta appends to it: {summary:?}"
+    );
+    assert_eq!(summary.last().map(String::as_str), Some("finished"));
+
+    // The continuation must contain the tool result exactly once and no
+    // duplicated user history.
+    let captures = fixture.captures().await;
+    let requests = captures.as_array().expect("captures array");
+    assert_eq!(requests.len(), 2, "exactly two provider requests: {captures}");
+    let second = &requests[1];
+    let messages = second["body"]["messages"].as_array().expect("messages");
+    let user_messages = messages.iter().filter(|message| message["role"] == "user").count();
+    assert_eq!(user_messages, 1, "user history is not duplicated: {messages:?}");
+    let tool_messages: Vec<_> = messages.iter().filter(|message| message["role"] == "tool").collect();
+    assert_eq!(tool_messages.len(), 1, "one tool result present: {messages:?}");
+    assert_eq!(tool_messages[0]["tool_call_id"], "call_abc");
+    assert!(
+        tool_messages[0]["content"].as_str().unwrap_or_default().contains("hello"),
+        "tool result content is delivered"
+    );
+    assert_eq!(second["headers"]["authorization"], "Bearer sk-fixture");
+
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn auth_none_never_sends_an_authorization_header() {
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([{ "kind": "text", "chunks": ["hello"] }]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge = spawn_bridge(dir.path(), profile(&fixture.base_url, false), None).await;
+    let mut stream = bridge.start_turn("conv-1", "hi".to_string()).await.expect("turn starts");
+    collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+    let captures = fixture.captures().await;
+    let headers = &captures[0]["headers"];
+    for (name, value) in headers.as_object().expect("headers object") {
+        let lower = name.to_ascii_lowercase();
+        assert_ne!(lower, "authorization", "auth=none must not send Authorization ({value})");
+    }
+    assert!(
+        !captures.to_string().contains("warposs-no-auth"),
+        "the internal placeholder must never reach the wire"
+    );
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn foreign_and_duplicate_tool_results_are_rejected_without_corrupting_the_turn() {
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([
+        {
+            "kind": "tool_call",
+            "toolCallId": "call_abc",
+            "toolName": "read",
+            "argumentChunks": ["{\"path\":\"a.txt\"}"]
+        },
+        { "kind": "text", "chunks": ["done"] }
+    ]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge = spawn_bridge(dir.path(), profile(&fixture.base_url, true), Some("sk-fixture")).await;
+    let mut stream = bridge.start_turn("conv-1", "read a.txt".to_string()).await.expect("turn starts");
+    collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+
+    // A result for a tool call that belongs to no pending call must be
+    // reported as a protocol error, and the real pending call must survive.
+    let mut foreign = bridge
+        .resume_turn("conv-1", vec![tool_call("someone-else", HelperToolResultStatus::Success, "x")])
+        .await
+        .expect("resume call accepted");
+    let events = collect_until(&mut foreign, TIMEOUT, |event| matches!(event, BridgeEvent::ProtocolError { .. })).await;
+    match events.last() {
+        Some(BridgeEvent::ProtocolError { code, .. }) => assert_eq!(code, "unknown_tool_result"),
+        other => panic!("expected protocol error, got {other:?}"),
+    }
+
+    // The genuine result still resumes the turn.
+    let mut stream = bridge
+        .resume_turn("conv-1", vec![tool_call("call_abc", HelperToolResultStatus::Success, "file contents")])
+        .await
+        .expect("resume accepted");
+    collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+
+    // A duplicate delivery after the run settled must not launch anything.
+    let mut duplicate = bridge
+        .resume_turn("conv-1", vec![tool_call("call_abc", HelperToolResultStatus::Success, "again")])
+        .await;
+    match duplicate {
+        Ok(_) => panic!("a settled turn must not accept tool results"),
+        Err(error) => assert!(
+            error.to_string().contains("no active Pi turn"),
+            "unexpected duplicate error: {error}"
+        ),
+    }
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancellation_settles_the_run_and_keeps_the_session_usable() {
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([
+        {
+            "kind": "tool_call",
+            "toolCallId": "call_hang",
+            "toolName": "bash",
+            "argumentChunks": ["{\"command\":\"sleep 30\"}"]
+        },
+        { "kind": "tool_call", "toolCallId": "call_two", "toolName": "glob", "argumentChunks": ["{\"pattern\":\"*.txt\"}"] },
+        { "kind": "text", "chunks": ["second turn done"] }
+    ]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge = spawn_bridge(dir.path(), profile(&fixture.base_url, true), Some("sk-fixture")).await;
+    let mut stream = bridge.start_turn("conv-1", "start a long command".to_string()).await.expect("turn starts");
+    collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+
+    bridge.cancel_turn("conv-1").await.expect("cancel accepted");
+    let cancelled = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunCancelled { .. })).await;
+    assert!(matches!(cancelled.last(), Some(BridgeEvent::RunCancelled { .. })));
+
+    // A fresh user message starts a new turn in the same session.
+    let mut stream = bridge.start_turn("conv-1", "second turn".to_string()).await.expect("second turn starts");
+    let paused = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+    let calls = tool_calls(&paused);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].tool_call_id, "call_two");
+    let mut stream = bridge
+        .resume_turn("conv-1", vec![tool_call("call_two", HelperToolResultStatus::Rejected, "no")])
+        .await
+        .expect("rejection accepted");
+    let settled = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+    assert_eq!(final_text(&settled).as_deref(), Some("second turn done"));
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn provider_failures_surface_as_a_single_terminal_failure() {
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([{ "kind": "error", "status": 401, "body": "{\"error\":{\"message\":\"bad key\"}}" }]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge = spawn_bridge(dir.path(), profile(&fixture.base_url, true), Some("sk-bad")).await;
+    let mut stream = bridge.start_turn("conv-1", "hello".to_string()).await.expect("turn starts");
+    let failed = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::RunFailed { .. })).await;
+    match failed.last() {
+        Some(BridgeEvent::RunFailed { code, retryable, .. }) => {
+            assert!(!retryable, "a 401 must not be retried");
+            assert!(code == "provider_error" || code == "internal_error", "code: {code}");
+        }
+        other => panic!("expected a terminal failure, got {other:?}"),
+    }
+    // No automatic retries: exactly one provider request.
+    let captures = fixture.captures().await;
+    assert_eq!(captures.as_array().map(Vec::len), Some(1), "captures: {captures}");
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn request_extraction_reads_the_native_request_shape() {
+    let request = api::Request {
+        task_context: Some(api::request::TaskContext {
+            tasks: vec![api::Task { id: "root".into(), ..Default::default() }],
+        }),
+        input: Some(api::request::Input {
+            context: Some(api::InputContext {
+                directory: Some(api::input_context::Directory { pwd: "/work".into(), ..Default::default() }),
+                ..Default::default()
+            }),
+            r#type: Some(api::request::input::Type::UserInputs(api::request::input::UserInputs {
+                inputs: vec![api::request::input::user_inputs::UserInput {
+                    input: Some(api::request::input::user_inputs::user_input::Input::UserQuery(
+                        api::request::input::UserQuery { query: "fix the test".into(), ..Default::default() },
+                    )),
+                }],
+            })),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let inputs = extract_request_inputs(&request).expect("extracts");
+    assert_eq!(inputs.conversation_id, "root");
+    assert_eq!(inputs.user_query.as_deref(), Some("fix the test"));
+    assert_eq!(inputs.working_dir.as_deref(), Some("/work"));
+    assert!(inputs.tool_results.is_empty());
+}
+
+#[tokio::test]
+async fn tool_result_rendering_maps_shell_results_for_the_model() {
+    let result = api::message::ToolCallResult {
+        tool_call_id: "call-1".into(),
+        context: None,
+        result: Some(api::message::tool_call_result::Result::RunShellCommand(api::RunShellCommandResult {
+            command: "echo hi".into(),
+            result: Some(api::run_shell_command_result::Result::CommandFinished(api::ShellCommandFinished {
+                output: "hi\n".into(),
+                exit_code: 0,
+                command_id: String::new(),
+                start_ts: None,
+                finish_ts: None,
+            })),
+            ..Default::default()
+        })),
+    };
+    let (status, text) = standalone_agent::warp_events::render_tool_call_result(&result);
+    assert_eq!(status, standalone_agent::warp_events::RenderedStatus::Success);
+    assert!(text.contains("hi"));
+    assert!(text.contains("exit code: 0"));
+
+    let denied = api::message::ToolCallResult {
+        tool_call_id: "call-2".into(),
+        context: None,
+        result: Some(api::message::tool_call_result::Result::RunShellCommand(api::RunShellCommandResult {
+            command: "rm -rf /".into(),
+            result: Some(api::run_shell_command_result::Result::PermissionDenied(api::PermissionDenied { reason: None })),
+            ..Default::default()
+        })),
+    };
+    let (status, text) = standalone_agent::warp_events::render_tool_call_result(&denied);
+    assert_eq!(status, standalone_agent::warp_events::RenderedStatus::Rejected);
+    assert!(text.contains("did not permit"));
+}

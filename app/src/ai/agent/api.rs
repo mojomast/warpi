@@ -181,6 +181,11 @@ pub struct RequestParams {
     pub parent_agent_id: Option<String>,
     /// The display name for this agent (e.g. "Agent 1"), assigned by the orchestrator.
     pub agent_name: Option<String>,
+    /// Set when this build serves the request with a local, user-configured
+    /// OpenAI-compatible endpoint instead of Warp servers. `None` in every
+    /// other build and in tests.
+    #[cfg(not(target_family = "wasm"))]
+    pub standalone: Option<crate::ai::standalone::StandaloneRequestConfig>,
 }
 
 pub type Event = Result<warp_multi_agent_api::ResponseEvent, Arc<AIApiError>>;
@@ -241,6 +246,8 @@ impl RequestParams {
             supported_tools_override: None,
             parent_agent_id: None,
             agent_name: None,
+            #[cfg(not(target_family = "wasm"))]
+            standalone: None,
         }
     }
 
@@ -418,6 +425,13 @@ impl RequestParams {
             .data()
             .context_window_limit_for_request(app);
 
+        #[cfg(not(target_family = "wasm"))]
+        let standalone = crate::ai::standalone::request_config(
+            app,
+            &conversation.id.to_string(),
+            session_context.current_working_directory().as_deref(),
+        );
+
         Self {
             input: request_input.all_inputs().cloned().collect(),
             conversation_token: conversation.server_conversation_token,
@@ -452,6 +466,8 @@ impl RequestParams {
             supported_tools_override: request_input.supported_tools_override.clone(),
             parent_agent_id: None,
             agent_name: None,
+            #[cfg(not(target_family = "wasm"))]
+            standalone,
         }
     }
 }

@@ -1,0 +1,27 @@
+[package]
+name = "standalone_agent"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Standalone (no Warp account/server) agent backend: local provider profiles, supervised Pi helper transport, and Warp event adaptation."
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tracing.workspace = true
+url.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+warp_multi_agent_api.workspace = true
+zeroize = "1.8.2"
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }

@@ -2249,6 +2249,18 @@ impl AISettings {
     }
 
     pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
+        // Standalone mode is explicitly configured by the local user and serves
+        // agent requests from a local OpenAI-compatible endpoint, so it does not
+        // require a Warp account. This exception is narrow: it is compiled out
+        // of web builds, activates only when a valid standalone config is
+        // present, and every other AI surface keeps its cloud gating (a
+        // signed-out cloud request fails at the local auth boundary before any
+        // network traffic).
+        #[cfg(not(target_family = "wasm"))]
+        if crate::ai::standalone::is_enabled() {
+            return true;
+        }
+
         // Disable AI for anonymous and logged-out users.
         let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
             .get()

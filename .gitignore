@@ -70,3 +70,8 @@ __pycache__/
 # Project notes
 .note/
 .claude/scheduled_tasks.lock
+
+# Standalone fork: bundled helper build output and local state
+standalone/pi-helper/node_modules/
+standalone/pi-helper/dist/
+standalone/config.local.json
