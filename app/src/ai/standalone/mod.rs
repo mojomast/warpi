@@ -216,6 +216,77 @@ pub fn write_config(config: &StandaloneConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every configured profile, in configuration order. Used to populate the
+/// native model picker.
+pub fn all_profiles() -> Vec<ProviderProfile> {
+    current_config().map(|config| config.profiles).unwrap_or_default()
+}
+
+/// Id of the profile currently serving inference.
+pub fn active_profile_id() -> Option<String> {
+    current_config().and_then(|config| config.active().map(|profile| profile.id.clone()))
+}
+
+/// Switch which model of which profile serves inference. Called when the user
+/// picks a standalone model in the native model picker.
+pub fn set_active_profile_model(profile_id: &str, model_id: &str) -> anyhow::Result<()> {
+    let mut config = StandaloneConfig::load()
+        .map(StandaloneConfig::normalized)
+        .unwrap_or_default();
+    let Some(profile) = config
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+    else {
+        return Err(anyhow!("no standalone profile with id {profile_id}"));
+    };
+    profile.model_id = model_id.to_string();
+    // Selecting a model re-enables it (the picker never offers a disabled one)
+    // and keeps it out of the disabled list across restarts.
+    profile.disabled_models.retain(|model| model != model_id);
+    config.active_profile = profile_id.to_string();
+    write_config(&config)
+}
+
+/// Enable or disable one model of a profile. Disabled models disappear from
+/// the model picker. The currently selected model cannot be disabled.
+pub fn set_model_enabled(profile_id: &str, model_id: &str, enabled: bool) -> anyhow::Result<()> {
+    let mut config = StandaloneConfig::load()
+        .map(StandaloneConfig::normalized)
+        .unwrap_or_default();
+    let Some(profile) = config
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+    else {
+        return Err(anyhow!("no standalone profile with id {profile_id}"));
+    };
+    if !enabled && profile.model_id == model_id {
+        return Err(anyhow!(
+            "select a different model before disabling the one currently in use"
+        ));
+    }
+    profile.disabled_models.retain(|model| model != model_id);
+    if !enabled {
+        profile.disabled_models.push(model_id.to_string());
+    }
+    write_config(&config)
+}
+
+/// Switch which profile serves inference. Called when the user picks a
+/// standalone model in the native model picker; the change is persisted and
+/// takes effect for the next request (running turns keep their endpoint).
+pub fn set_active_profile(id: &str) -> anyhow::Result<()> {
+    let mut config = StandaloneConfig::load()
+        .map(StandaloneConfig::normalized)
+        .unwrap_or_default();
+    if !config.profiles.iter().any(|profile| profile.id == id) {
+        return Err(anyhow!("no standalone profile with id {id}"));
+    }
+    config.active_profile = id.to_string();
+    write_config(&config)
+}
+
 /// Insert or replace a profile and persist it, keeping the active selection.
 pub fn upsert_profile(profile: ProviderProfile) -> anyhow::Result<()> {
     let mut config = StandaloneConfig::load().map(StandaloneConfig::normalized).unwrap_or_default();
@@ -252,6 +323,9 @@ pub struct ProviderPreset {
     /// Suggested model id. For local servers this is a starting point; the
     /// provider's real model list is discovered by "Test connection".
     pub suggested_model: &'static str,
+    /// Additional selectable model ids offered by the preset (for example the
+    /// larger variant of the same provider).
+    pub extra_models: &'static [&'static str],
     pub context_limit: u64,
     pub output_limit: u64,
     /// Whether the endpoint normally requires an API key.
@@ -269,6 +343,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Custom endpoint…",
         base_url: "",
         suggested_model: "",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: false,
@@ -279,6 +354,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "DeepSeek",
         base_url: "https://api.deepseek.com/v1",
         suggested_model: "deepseek-flash",
+        extra_models: &["deepseek-v4-pro"],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -289,6 +365,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "OpenAI",
         base_url: "https://api.openai.com/v1",
         suggested_model: "gpt-4.1",
+        extra_models: &[],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -299,6 +376,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "OpenRouter",
         base_url: "https://openrouter.ai/api/v1",
         suggested_model: "openai/gpt-4.1",
+        extra_models: &[],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -309,6 +387,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Groq",
         base_url: "https://api.groq.com/openai/v1",
         suggested_model: "llama-3.3-70b-versatile",
+        extra_models: &[],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -319,6 +398,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Mistral",
         base_url: "https://api.mistral.ai/v1",
         suggested_model: "mistral-large-latest",
+        extra_models: &[],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -329,6 +409,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "xAI (Grok)",
         base_url: "https://api.x.ai/v1",
         suggested_model: "grok-3",
+        extra_models: &[],
         context_limit: 131072,
         output_limit: 8192,
         requires_key: true,
@@ -339,6 +420,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Together AI",
         base_url: "https://api.together.xyz/v1",
         suggested_model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: true,
@@ -349,6 +431,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Fireworks AI",
         base_url: "https://api.fireworks.ai/inference/v1",
         suggested_model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: true,
@@ -359,6 +442,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "Ollama (local)",
         base_url: "http://127.0.0.1:11434/v1",
         suggested_model: "llama3.2",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: false,
@@ -369,6 +453,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "LM Studio (local)",
         base_url: "http://127.0.0.1:1234/v1",
         suggested_model: "",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: false,
@@ -379,6 +464,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "llama.cpp server (local)",
         base_url: "http://127.0.0.1:8080/v1",
         suggested_model: "",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: false,
@@ -389,6 +475,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         display_name: "vLLM (local)",
         base_url: "http://127.0.0.1:8000/v1",
         suggested_model: "",
+        extra_models: &[],
         context_limit: 32768,
         output_limit: 4096,
         requires_key: false,
@@ -802,6 +889,8 @@ mod tests {
             base_url: "http://127.0.0.1:1/v1".into(),
             wire: standalone_agent::provider::WireProtocol::OpenAiChatCompletions,
             model_id: "m".into(),
+            models: Vec::new(),
+            disabled_models: Vec::new(),
             credential: standalone_agent::provider::CredentialRef::None,
             context_limit: 8192,
             output_limit: 1024,

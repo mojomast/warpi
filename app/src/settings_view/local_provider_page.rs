@@ -10,6 +10,7 @@
 //! only implement `/chat/completions`.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use standalone_agent::provider::{CredentialRef, ProviderProfile, WireProtocol};
@@ -44,6 +45,7 @@ const SECTION_MARGIN_BOTTOM: f32 = 24.;
 #[derive(Clone, Debug, PartialEq)]
 pub enum LocalProviderAction {
     SelectPreset(String),
+    ToggleModel { profile_id: String, model_id: String, enabled: bool },
     ToggleEnabled,
     ToggleAuthMode,
     Save,
@@ -73,6 +75,9 @@ pub struct LocalProviderPageView {
     display_name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
     model_id_editor: ViewHandle<EditorView>,
+    additional_models_editor: ViewHandle<EditorView>,
+    disabled_models: RefCell<Vec<String>>,
+    model_toggle_mouse_states: RefCell<HashMap<String, MouseStateHandle>>,
     context_limit_editor: ViewHandle<EditorView>,
     output_limit_editor: ViewHandle<EditorView>,
     api_key_editor: ViewHandle<EditorView>,
@@ -114,6 +119,7 @@ impl LocalProviderPageView {
         let display_name_editor = make_editor(ctx, profile.display_name.clone(), false);
         let base_url_editor = make_editor(ctx, profile.base_url.clone(), false);
         let model_id_editor = make_editor(ctx, profile.model_id.clone(), false);
+        let additional_models_editor = make_editor(ctx, profile.models.join(", "), false);
         let context_limit_editor = make_editor(ctx, profile.context_limit.to_string(), false);
         let output_limit_editor = make_editor(ctx, profile.output_limit.to_string(), false);
         let api_key_editor = make_editor(ctx, String::new(), true);
@@ -123,6 +129,7 @@ impl LocalProviderPageView {
             &display_name_editor,
             &base_url_editor,
             &model_id_editor,
+            &additional_models_editor,
             &context_limit_editor,
             &output_limit_editor,
             &api_key_editor,
@@ -165,6 +172,9 @@ impl LocalProviderPageView {
             display_name_editor,
             base_url_editor,
             model_id_editor,
+            additional_models_editor,
+            disabled_models: RefCell::new(profile.disabled_models.clone()),
+            model_toggle_mouse_states: RefCell::new(HashMap::new()),
             context_limit_editor,
             output_limit_editor,
             api_key_editor,
@@ -187,6 +197,7 @@ impl LocalProviderPageView {
             display_name: self.display_name_editor.as_ref(app).buffer_text(app),
             base_url: self.base_url_editor.as_ref(app).buffer_text(app),
             model_id: self.model_id_editor.as_ref(app).buffer_text(app),
+            additional_models: self.additional_models_editor.as_ref(app).buffer_text(app),
             context_limit: self.context_limit_editor.as_ref(app).buffer_text(app),
             output_limit: self.output_limit_editor.as_ref(app).buffer_text(app),
             api_key: self.api_key_editor.as_ref(app).buffer_text(app),
@@ -216,6 +227,14 @@ impl LocalProviderPageView {
             base_url: values.base_url.trim().to_string(),
             wire: WireProtocol::OpenAiChatCompletions,
             model_id: values.model_id.trim().to_string(),
+            models: values
+                .additional_models
+                .split(',')
+                .map(str::trim)
+                .filter(|model| !model.is_empty())
+                .map(str::to_string)
+                .collect(),
+            disabled_models: self.disabled_models.borrow().clone(),
             credential,
             context_limit,
             output_limit,
@@ -266,7 +285,7 @@ impl LocalProviderPageView {
                     // Refresh the model picker/chip so the local model shows up
                     // immediately, without a restart.
                     crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
-                        preferences.rebuild_standalone_llm(ctx);
+                        preferences.rebuild_standalone_llms(ctx);
                     });
                     self.set_status(
                         "Saved. The next agent request uses this endpoint; no restart needed.",
@@ -329,10 +348,12 @@ impl LocalProviderPageView {
     /// Fill the form from a preset. Display name and model id are only set when
     /// the preset suggests one, so a custom choice is never overwritten.
     fn apply_preset(&mut self, preset: &standalone::ProviderPreset, ctx: &mut ViewContext<Self>) {
-        let values: [(&ViewHandle<EditorView>, String); 5] = [
+        self.disabled_models.borrow_mut().clear();
+        let values: [(&ViewHandle<EditorView>, String); 6] = [
             (&self.display_name_editor, preset.display_name.to_string()),
             (&self.base_url_editor, preset.base_url.to_string()),
             (&self.model_id_editor, preset.suggested_model.to_string()),
+            (&self.additional_models_editor, preset.extra_models.join(", ")),
             (&self.context_limit_editor, preset.context_limit.to_string()),
             (&self.output_limit_editor, preset.output_limit.to_string()),
         ];
@@ -349,10 +370,12 @@ impl LocalProviderPageView {
     }
 
     fn apply_profile(&mut self, profile: &ProviderProfile, ctx: &mut ViewContext<Self>) {
+        self.disabled_models.borrow_mut().clone_from(&profile.disabled_models);
         let values = [
             (self.display_name_editor.clone(), profile.display_name.clone()),
             (self.base_url_editor.clone(), profile.base_url.clone()),
             (self.model_id_editor.clone(), profile.model_id.clone()),
+            (self.additional_models_editor.clone(), profile.models.join(", ")),
             (self.context_limit_editor.clone(), profile.context_limit.to_string()),
             (self.output_limit_editor.clone(), profile.output_limit.to_string()),
         ];
@@ -464,10 +487,15 @@ impl LocalProviderPageView {
                 .finish(),
         );
 
-        let fields: [(&str, &ViewHandle<EditorView>, &str); 5] = [
+        let fields: [(&str, &ViewHandle<EditorView>, &str); 6] = [
             ("Display name", &self.display_name_editor, "e.g. Local llama.cpp"),
             ("Base URL", &self.base_url_editor, "e.g. http://127.0.0.1:8080/v1"),
             ("Model id (sent verbatim to the provider)", &self.model_id_editor, "e.g. qwen3-coder-30b"),
+            (
+                "Additional models (comma-separated)",
+                &self.additional_models_editor,
+                "e.g. deepseek-v4-pro, deepseek-reasoner",
+            ),
             ("Context limit (tokens)", &self.context_limit_editor, "e.g. 131072"),
             ("Output limit (tokens)", &self.output_limit_editor, "e.g. 8192"),
         ];
@@ -492,6 +520,65 @@ impl LocalProviderPageView {
                 .with_margin_bottom(FIELD_MARGIN_BOTTOM)
                 .finish(),
             );
+        }
+
+        // Per-model enable/disable. Every model of every configured profile is
+        // listed in the model picker unless it is switched off here.
+        let config_for_models = standalone::current_config();
+        if let Some(profile) = config_for_models
+            .as_ref()
+            .and_then(|config| config.profile(&self.profile_id))
+        {
+            let all_models = profile.selectable_models();
+            if all_models.len() > 1 {
+                column.add_child(
+                    ui_builder
+                        .span("Models offered in the model picker")
+                        .build()
+                        .with_margin_bottom(LABEL_MARGIN_BOTTOM)
+                        .finish(),
+                );
+                for model in all_models {
+                    let enabled = !self.disabled_models.borrow().contains(&model);
+                    let mouse_state = self
+                        .model_toggle_mouse_states
+                        .borrow_mut()
+                        .entry(model.clone())
+                        .or_default()
+                        .clone();
+                    column.add_child(
+                        Container::new(
+                            ui_builder
+                                .button(ButtonVariant::Secondary, mouse_state)
+                                .with_text_label(if enabled {
+                                    format!("● {model}")
+                                } else {
+                                    format!("○ {model}")
+                                })
+                                .build()
+                                .on_click({
+                                    let profile_id = self.profile_id.clone();
+                                    let model_id = model.clone();
+                                    move |ctx, _, _| {
+                                        ctx.dispatch_typed_action(LocalProviderAction::ToggleModel {
+                                            profile_id: profile_id.clone(),
+                                            model_id: model_id.clone(),
+                                            enabled: !enabled,
+                                        })
+                                    }
+                                })
+                                .finish(),
+                        )
+                        .with_margin_bottom(4.)
+                        .finish(),
+                    );
+                }
+                column.add_child(
+                    Container::new(ui_builder.span("").build().finish())
+                        .with_margin_bottom(FIELD_MARGIN_BOTTOM)
+                        .finish(),
+                );
+            }
         }
 
         // Authentication mode.
@@ -665,6 +752,8 @@ fn new_profile_template() -> ProviderProfile {
         base_url: "http://127.0.0.1:8080/v1".to_string(),
         wire: WireProtocol::OpenAiChatCompletions,
         model_id: String::new(),
+        models: Vec::new(),
+        disabled_models: Vec::new(),
         credential: CredentialRef::None,
         context_limit: 32768,
         output_limit: 4096,
@@ -679,6 +768,7 @@ struct FormValues {
     display_name: String,
     base_url: String,
     model_id: String,
+    additional_models: String,
     context_limit: String,
     output_limit: String,
     api_key: String,
@@ -767,6 +857,23 @@ impl TypedActionView for LocalProviderPageView {
                     );
                     ctx.notify();
                 }
+            }
+            LocalProviderAction::ToggleModel { profile_id, model_id, enabled } => {
+                match standalone::set_model_enabled(profile_id, model_id, *enabled) {
+                    Ok(()) => {
+                        if *enabled {
+                            self.disabled_models.borrow_mut().retain(|model| model != model_id);
+                        } else if !self.disabled_models.borrow().contains(model_id) {
+                            self.disabled_models.borrow_mut().push(model_id.clone());
+                        }
+                        crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
+                            preferences.rebuild_standalone_llms(ctx);
+                        });
+                        self.set_status(format!("{model_id} is now {}.", if *enabled { "enabled" } else { "disabled" }), false);
+                    }
+                    Err(error) => self.set_status(error.to_string(), true),
+                }
+                ctx.notify();
             }
             LocalProviderAction::ToggleEnabled => {
                 self.enabled = !self.enabled;

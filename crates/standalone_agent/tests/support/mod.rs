@@ -108,6 +108,8 @@ pub fn profile(base_url: &str, with_key: bool) -> ProviderProfile {
         base_url: base_url.to_string(),
         wire: WireProtocol::OpenAiChatCompletions,
         model_id: "fixture-model".into(),
+        models: Vec::new(),
+        disabled_models: Vec::new(),
         credential: if with_key {
             CredentialRef::SecretStore { key: "warpi/fixture".into() }
         } else {

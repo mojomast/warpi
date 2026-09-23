@@ -104,8 +104,18 @@ pub struct ProviderProfile {
     /// Base URL of the Chat Completions endpoint.
     pub base_url: String,
     pub wire: WireProtocol,
-    /// The provider's own model identifier, sent verbatim as `model`.
+    /// The provider's own model identifier, sent verbatim as `model`. This is
+    /// the profile's currently selected model.
     pub model_id: String,
+    /// Additional selectable model ids for the same endpoint+credential. They
+    /// appear in the model picker next to `model_id`; selecting one switches
+    /// which id this profile sends. Empty for single-model endpoints.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Model ids in [`Self::selectable_models`] that the user switched off in
+    /// the settings page. Disabled models never appear in the model picker.
+    #[serde(default)]
+    pub disabled_models: Vec<String>,
     pub credential: CredentialRef,
     pub context_limit: u64,
     pub output_limit: u64,
@@ -248,6 +258,29 @@ impl ProviderProfile {
     }
 
     /// Build the helper's provider description with a resolved credential.
+    /// The models the picker may offer: every selectable id that is not
+    /// disabled. The selected model is always included, even if the disabled
+    /// list somehow contains it.
+    pub fn enabled_models(&self) -> Vec<String> {
+        self.selectable_models()
+            .into_iter()
+            .filter(|model| model == &self.model_id || !self.disabled_models.iter().any(|d| d == model))
+            .collect()
+    }
+
+    /// Every selectable model id for this profile: the selected one first,
+    /// then the additional ones, de-duplicated.
+    pub fn selectable_models(&self) -> Vec<String> {
+        let mut models = vec![self.model_id.clone()];
+        for model in &self.models {
+            let model = model.trim();
+            if !model.is_empty() && !models.iter().any(|existing| existing == model) {
+                models.push(model.to_string());
+            }
+        }
+        models
+    }
+
     pub fn helper_config(&self, api_key: Option<&str>) -> Result<HelperProviderConfig, ProfileError> {
         self.validate()?;
         let base_url = self.normalized_base_url()?;
@@ -298,6 +331,8 @@ mod tests {
             base_url: base_url.into(),
             wire: WireProtocol::OpenAiChatCompletions,
             model_id: model_id.into(),
+            models: Vec::new(),
+            disabled_models: Vec::new(),
             credential: CredentialRef::None,
             context_limit: 32768,
             output_limit: 4096,
