@@ -18,8 +18,12 @@ use warpui::elements::{
     Text,
 };
 use warpui::ui_components::button::ButtonVariant;
-use warpui::ui_components::components::{UiComponent, UiComponentStyles};
+use warpui::ui_components::components::UiComponentStyles;
+use warpui::elements::ChildView;
+use warpui::ui_components::components::UiComponent;
 use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, UpdateView, View, ViewContext, ViewHandle};
+
+use crate::view_components::{Dropdown, DropdownItem};
 
 use super::SettingsSection;
 use super::settings_page::{
@@ -39,6 +43,7 @@ const SECTION_MARGIN_BOTTOM: f32 = 24.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LocalProviderAction {
+    SelectPreset(String),
     ToggleEnabled,
     ToggleAuthMode,
     Save,
@@ -64,6 +69,7 @@ struct StatusMessage {
 pub struct LocalProviderPageView {
     page: PageType<Self>,
     profile_id: String,
+    provider_dropdown: ViewHandle<Dropdown<LocalProviderAction>>,
     display_name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
     model_id_editor: ViewHandle<EditorView>,
@@ -73,6 +79,7 @@ pub struct LocalProviderPageView {
     enabled: bool,
     use_api_key: bool,
     status: RefCell<Option<StatusMessage>>,
+    discovered_models: RefCell<Vec<String>>,
     test_state: RefCell<TestState>,
     save_button_mouse_state: MouseStateHandle,
     test_button_mouse_state: MouseStateHandle,
@@ -127,12 +134,34 @@ impl LocalProviderPageView {
             });
         }
 
-        let api_key_key = standalone::credential_key(&profile.id);
-        let _ = api_key_key; // documented: credentials live under this key
+        let provider_dropdown = ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::new(ctx);
+            dropdown.set_top_bar_max_width(360.);
+            dropdown.set_items(
+                standalone::PROVIDER_PRESETS
+                    .iter()
+                    .map(|preset| {
+                        DropdownItem::new(
+                            preset.display_name,
+                            LocalProviderAction::SelectPreset(preset.id.to_string()),
+                        )
+                    })
+                    .collect(),
+                ctx,
+            );
+            if let Some(preset) = standalone::preset_for_profile(&profile) {
+                dropdown.set_selected_by_action(
+                    LocalProviderAction::SelectPreset(preset.id.to_string()),
+                    ctx,
+                );
+            }
+            dropdown
+        });
 
         Self {
             page: PageType::new_monolith(LocalProviderWidget, Some("Local Pi provider"), false),
             profile_id: profile.id.clone(),
+            provider_dropdown,
             display_name_editor,
             base_url_editor,
             model_id_editor,
@@ -142,6 +171,7 @@ impl LocalProviderPageView {
             enabled,
             use_api_key,
             status: RefCell::new(None),
+            discovered_models: RefCell::new(Vec::new()),
             test_state: RefCell::new(TestState::Idle),
             save_button_mouse_state: MouseStateHandle::default(),
             test_button_mouse_state: MouseStateHandle::default(),
@@ -296,6 +326,28 @@ impl LocalProviderPageView {
         *self.test_state.borrow_mut() = TestState::Idle;
     }
 
+    /// Fill the form from a preset. Display name and model id are only set when
+    /// the preset suggests one, so a custom choice is never overwritten.
+    fn apply_preset(&mut self, preset: &standalone::ProviderPreset, ctx: &mut ViewContext<Self>) {
+        let values: [(&ViewHandle<EditorView>, String); 5] = [
+            (&self.display_name_editor, preset.display_name.to_string()),
+            (&self.base_url_editor, preset.base_url.to_string()),
+            (&self.model_id_editor, preset.suggested_model.to_string()),
+            (&self.context_limit_editor, preset.context_limit.to_string()),
+            (&self.output_limit_editor, preset.output_limit.to_string()),
+        ];
+        for (editor, text) in values {
+            let editor = editor.clone();
+            ctx.update_view(&editor, |editor: &mut EditorView, ctx| {
+                editor.set_buffer_text(&text, ctx)
+            });
+        }
+        self.use_api_key = preset.requires_key;
+        ctx.update_view(&self.api_key_editor, |editor: &mut EditorView, ctx| {
+            editor.set_buffer_text("", ctx);
+        });
+    }
+
     fn apply_profile(&mut self, profile: &ProviderProfile, ctx: &mut ViewContext<Self>) {
         let values = [
             (self.display_name_editor.clone(), profile.display_name.clone()),
@@ -349,10 +401,11 @@ impl LocalProviderPageView {
         ctx.spawn(
             async move { probe_endpoint(url, api_key).await },
             |me, result, ctx| {
-                let (message, is_error) = match &result {
-                    Ok(outcome) => (outcome.clone(), false),
-                    Err(error) => (error.clone(), true),
+                let (message, is_error, models) = match result {
+                    Ok(outcome) => (outcome.message, false, outcome.models),
+                    Err(error) => (error, true, Vec::new()),
                 };
+                *me.discovered_models.borrow_mut() = models;
                 *me.test_state.borrow_mut() = if is_error {
                     TestState::Failed(message.clone())
                 } else {
@@ -396,6 +449,19 @@ impl LocalProviderPageView {
             ))
             .with_margin_bottom(FIELD_MARGIN_BOTTOM)
             .finish(),
+        );
+
+        column.add_child(
+            ui_builder
+                .span("Provider")
+                .build()
+                .with_margin_bottom(LABEL_MARGIN_BOTTOM)
+                .finish(),
+        );
+        column.add_child(
+            Container::new(ChildView::new(&self.provider_dropdown).finish())
+                .with_margin_bottom(FIELD_MARGIN_BOTTOM)
+                .finish(),
         );
 
         let fields: [(&str, &ViewHandle<EditorView>, &str); 5] = [
@@ -523,8 +589,12 @@ impl LocalProviderPageView {
                 .finish(),
         );
 
-        // Status.
+        // Status (plus any model ids discovered by "Test connection").
         if let Some(status) = self.status.borrow().as_ref() {
+            let status_text = match self.discovered_models.borrow().as_slice() {
+                [] => status.text.clone(),
+                models => format!("{} Models available: {}", status.text, models.join(", ")),
+            };
             let color = if status.is_error {
                 theme.ui_error_color()
             } else {
@@ -533,7 +603,7 @@ impl LocalProviderPageView {
             column.add_child(
                 Container::new(
                     Text::new(
-                        status.text.clone(),
+                        status_text,
                         appearance.ui_font_family(),
                         appearance.ui_font_size(),
                     )
@@ -614,9 +684,14 @@ struct FormValues {
     api_key: String,
 }
 
-/// `Ok(message)` when the endpoint answered (including 404 on `/models`),
+struct ProbeOutcome {
+    message: String,
+    models: Vec<String>,
+}
+
+/// `Ok(outcome)` when the endpoint answered (including 404 on `/models`),
 /// `Err(message)` when it did not.
-async fn probe_endpoint(url: String, api_key: Option<String>) -> Result<String, String> {
+async fn probe_endpoint(url: String, api_key: Option<String>) -> Result<ProbeOutcome, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
@@ -629,21 +704,36 @@ async fn probe_endpoint(url: String, api_key: Option<String>) -> Result<String, 
         Ok(response) => {
             let status = response.status();
             if status == reqwest::StatusCode::NOT_FOUND {
-                return Ok(
-                    "Endpoint reachable; /models is absent. That is fine: the model id is configured manually."
-                        .to_string(),
-                );
+                return Ok(ProbeOutcome {
+                    message:
+                        "Endpoint reachable; /models is absent. That is fine: the model id is configured manually."
+                            .to_string(),
+                    models: Vec::new(),
+                });
             }
             if status.is_success() {
-                let models = response
+                let discovered = response
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|body| body.get("data").and_then(|data| data.as_array().map(Vec::len)));
-                return Ok(match models {
-                    Some(count) => format!("Endpoint reachable (HTTP {status}); {count} model(s) reported."),
-                    None => format!("Endpoint reachable (HTTP {status})."),
-                });
+                    .and_then(|body| {
+                        body.get("data").and_then(|data| data.as_array()).map(|models| {
+                            models
+                                .iter()
+                                .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
+                                .map(str::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .unwrap_or_default();
+                let shown = discovered.iter().take(8).cloned().collect::<Vec<_>>();
+                let message = match discovered.len() {
+                    0 => format!("Endpoint reachable (HTTP {status})."),
+                    count => format!(
+                        "Endpoint reachable (HTTP {status}); {count} model(s) reported. Pick one in the Model id field."
+                    ),
+                };
+                return Ok(ProbeOutcome { message, models: shown });
             }
             Err(format!(
                 "Endpoint answered HTTP {status}. Check the URL, the model id, and the credential."
@@ -662,6 +752,22 @@ impl TypedActionView for LocalProviderPageView {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
+            LocalProviderAction::SelectPreset(id) => {
+                if let Some(preset) = standalone::preset_by_id(id) {
+                    if !preset.base_url.is_empty() {
+                        self.apply_preset(preset, ctx);
+                    }
+                    self.set_status(
+                        if preset.note.is_empty() {
+                            format!("Filled the {} preset; enter the API key and save.", preset.display_name)
+                        } else {
+                            format!("{} — {}", preset.display_name, preset.note)
+                        },
+                        false,
+                    );
+                    ctx.notify();
+                }
+            }
             LocalProviderAction::ToggleEnabled => {
                 self.enabled = !self.enabled;
                 self.save(ctx);

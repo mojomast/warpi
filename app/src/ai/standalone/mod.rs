@@ -241,6 +241,173 @@ pub fn remove_profile(id: &str) -> anyhow::Result<()> {
     write_config(&config)
 }
 
+/// A ready-to-use provider preset shown in the settings page. Presets only
+/// prefill the endpoint and a suggested model id; every field stays editable,
+/// which is also how arbitrary custom endpoints are configured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderPreset {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub base_url: &'static str,
+    /// Suggested model id. For local servers this is a starting point; the
+    /// provider's real model list is discovered by "Test connection".
+    pub suggested_model: &'static str,
+    pub context_limit: u64,
+    pub output_limit: u64,
+    /// Whether the endpoint normally requires an API key.
+    pub requires_key: bool,
+    pub note: &'static str,
+}
+
+/// Presets for common OpenAI-compatible endpoints, plus the custom path.
+/// Model ids are editable and can be verified with "Test connection"; nothing
+/// here is a claim that a given provider supports tool calls (that is checked
+/// by trying a real request).
+pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
+    ProviderPreset {
+        id: "custom",
+        display_name: "Custom endpoint…",
+        base_url: "",
+        suggested_model: "",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: false,
+        note: "Any OpenAI-compatible Chat Completions endpoint, including one you host yourself.",
+    },
+    ProviderPreset {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        base_url: "https://api.deepseek.com/v1",
+        suggested_model: "deepseek-flash",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "Verified with this fork: tool calls and streaming work.",
+    },
+    ProviderPreset {
+        id: "openai",
+        display_name: "OpenAI",
+        base_url: "https://api.openai.com/v1",
+        suggested_model: "gpt-4.1",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "Chat Completions only; the Responses API is not supported.",
+    },
+    ProviderPreset {
+        id: "openrouter",
+        display_name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        suggested_model: "openai/gpt-4.1",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "Model ids use the vendor/model form.",
+    },
+    ProviderPreset {
+        id: "groq",
+        display_name: "Groq",
+        base_url: "https://api.groq.com/openai/v1",
+        suggested_model: "llama-3.3-70b-versatile",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "",
+    },
+    ProviderPreset {
+        id: "mistral",
+        display_name: "Mistral",
+        base_url: "https://api.mistral.ai/v1",
+        suggested_model: "mistral-large-latest",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "",
+    },
+    ProviderPreset {
+        id: "xai",
+        display_name: "xAI (Grok)",
+        base_url: "https://api.x.ai/v1",
+        suggested_model: "grok-3",
+        context_limit: 131072,
+        output_limit: 8192,
+        requires_key: true,
+        note: "",
+    },
+    ProviderPreset {
+        id: "together",
+        display_name: "Together AI",
+        base_url: "https://api.together.xyz/v1",
+        suggested_model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: true,
+        note: "",
+    },
+    ProviderPreset {
+        id: "fireworks",
+        display_name: "Fireworks AI",
+        base_url: "https://api.fireworks.ai/inference/v1",
+        suggested_model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: true,
+        note: "",
+    },
+    ProviderPreset {
+        id: "ollama",
+        display_name: "Ollama (local)",
+        base_url: "http://127.0.0.1:11434/v1",
+        suggested_model: "llama3.2",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: false,
+        note: "Local server; no API key by default.",
+    },
+    ProviderPreset {
+        id: "lmstudio",
+        display_name: "LM Studio (local)",
+        base_url: "http://127.0.0.1:1234/v1",
+        suggested_model: "",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: false,
+        note: "Use the model id shown in LM Studio.",
+    },
+    ProviderPreset {
+        id: "llamacpp",
+        display_name: "llama.cpp server (local)",
+        base_url: "http://127.0.0.1:8080/v1",
+        suggested_model: "",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: false,
+        note: "Use the model name the server was started with.",
+    },
+    ProviderPreset {
+        id: "vllm",
+        display_name: "vLLM (local)",
+        base_url: "http://127.0.0.1:8000/v1",
+        suggested_model: "",
+        context_limit: 32768,
+        output_limit: 4096,
+        requires_key: false,
+        note: "Use the served model name.",
+    },
+];
+
+pub fn preset_by_id(id: &str) -> Option<&'static ProviderPreset> {
+    PROVIDER_PRESETS.iter().find(|preset| preset.id == id)
+}
+
+/// Which preset matches a configured profile (matched on normalized base URL).
+pub fn preset_for_profile(profile: &ProviderProfile) -> Option<&'static ProviderPreset> {
+    let base = profile.normalized_base_url().ok()?;
+    PROVIDER_PRESETS
+        .iter()
+        .find(|preset| !preset.base_url.is_empty() && preset.base_url.trim_end_matches('/') == base)
+}
+
 /// Secret-store key for a profile's credential. Stable: it ends up inside the
 /// profile's `CredentialRef`.
 pub fn credential_key(profile_id: &str) -> String {
