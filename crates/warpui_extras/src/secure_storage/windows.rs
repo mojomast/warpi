@@ -102,6 +102,11 @@ impl super::SecureStorage for SecureStorage {
     fn write_value(&self, key: &str, value: &str) -> Result<(), Error> {
         let storage_file = self.storage_file(key);
         let encrypted_bytes = Self::encrypt(key, value.to_string())?;
+        // Keys may contain path separators (e.g. `warpi/profile/<id>`), which
+        // turns the tail of the key into directories; create them first.
+        if let Some(parent) = storage_file.parent() {
+            std::fs::create_dir_all(parent).map_err(Error::from)?;
+        }
         std::fs::write(storage_file, encrypted_bytes).map_err(Error::from)
     }
 

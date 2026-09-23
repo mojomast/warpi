@@ -507,8 +507,11 @@ pub fn store_credential(app: &warpui_core::AppContext, profile_id: &str, value: 
     if value.trim().is_empty() {
         return delete_credential_for(app, profile_id);
     }
+    // The owner-only variant creates any missing directories (credential keys
+    // look like `warpi/profile/<id>`) and keeps the fallback copy 0600 - the
+    // plain writer fails on the first save on systems without a Secret Service.
     app.secure_storage()
-        .write_value(&credential_key(profile_id), value)
+        .write_value_with_owner_only_fallback(&credential_key(profile_id), value)
         .map_err(|error| anyhow!("could not write credential: {error}"))
 }
 

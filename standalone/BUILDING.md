@@ -69,6 +69,11 @@ For an endpoint that requires no authentication:
 
 `wire` only accepts `open_ai_chat_completions`. Other protocols are rejected.
 
+On a Linux box with no Secret Service (no `gnome-keyring`/KWallet running),
+Warp falls back to an AES-256-GCM-encrypted file under the application state
+directory, mode `0600`; the key never enters the config file or the helper's
+session.
+
 Credentials are written by the settings page. If you prefer the platform tool,
 the key format is `warpi/profile/<profile-id>` (macOS Keychain
 `security add-generic-password`, `secret-tool store` on Linux, Windows

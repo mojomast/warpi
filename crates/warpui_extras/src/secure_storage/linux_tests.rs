@@ -45,6 +45,38 @@ fn test_decrypt_fails_on_malformed_data() {
 }
 
 #[test]
+fn fallback_write_creates_parent_directories_for_nested_keys() {
+    // `write_value` falls back to the disk copy when no Secret Service is
+    // available; credential keys like `warpi/profile/<id>` contain a path
+    // separator, so the writer must create the sub-directory itself.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let fallback_dir = temp_dir.path().join("secure-storage");
+    let storage = SecureStorage::new_with_fallback("warpi", fallback_dir);
+    let key = "warpi/profile/6e0e0f1a-0000-4000-8000-000000000000";
+
+    storage
+        .write_owner_only_fallback_value(key, "sk-test-value")
+        .expect("fallback write creates the parent directory");
+    assert_eq!(
+        storage.read_fallback_value(key).expect("fallback read"),
+        "sk-test-value"
+    );
+
+    let file = storage.fallback_file(key).expect("fallback file");
+    let mode = std::fs::metadata(&file)
+        .expect("fallback metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "fallback file must stay owner-only");
+
+    storage.delete_fallback_value(key).expect("fallback delete");
+    assert!(!file.exists());
+}
+
+#[test]
 fn fallback_value_is_owner_only() {
     use std::os::unix::fs::PermissionsExt as _;
 
