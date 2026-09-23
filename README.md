@@ -410,6 +410,40 @@ equivalent of Warp running the approved command).
   per-session actors for request interleaving, and a full egress audit of the GUI
   process are all still open (see `standalone/PLAN.md`).
 
+### Next up (design-level ideas from a third-party review)
+
+These are ideas, not commitments or implemented behavior. They come from an
+internal review of the MIT-licensed
+[Jgracier/ClikCode](https://github.com/Jgracier/ClikCode) — recorded as
+`standalone/research/clikcode-review.md` in the development tree, which is not
+part of this repository. Design inspiration is free to reuse; any copied code
+needs the MIT copyright and permission notice recorded in `LICENSE-NOTES.md`
+first.
+
+- **Retry recoverable provider errors.** Today an endpoint error (rate limit,
+  busy server, dropped connection) ends the turn as a generic failure. Next:
+  classify errors by their kind or status and retry the recoverable ones with
+  bounded backoff, without fighting the existing inactivity and cancellation
+  timeouts.
+- **Steer a running turn.** Prompts submitted mid-turn are queued today, and the
+  send-now keybinding cancels the running turn and sends immediately. Steering
+  would let a new message join the turn already running, taking effect at its
+  next step.
+
+### Later
+
+- **Two-stage compaction with an authoritative token count.** Elide old tool
+  output before summarizing, never split a tool call from its result, and prefer
+  the endpoint-reported input-token count over local estimates for the context
+  and usage display.
+- **Per-model context/output defaults.** A small longest-prefix table so new
+  provider presets start with sensible limits the user can still override.
+- **Clearer permission-policy wording.** Reusable ways to phrase and structure
+  allow/deny decisions (narrowest-rule suggestions, compound-command awareness)
+  as subagent approvals are designed; Warp remains the approval authority.
+- **Safer helper packaging.** Build-time assertions and an install-and-run test
+  for the Node helper bundle.
+
 ## Licensing and attribution
 
 - Upstream Warp code is **AGPL-3.0-only** (`LICENSE-AGPL`), except
