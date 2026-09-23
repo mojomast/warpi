@@ -170,7 +170,7 @@ async fn auth_none_never_sends_an_authorization_header() {
         assert_ne!(lower, "authorization", "auth=none must not send Authorization ({value})");
     }
     assert!(
-        !captures.to_string().contains("warposs-no-auth"),
+        !captures.to_string().contains("warpi-no-auth"),
         "the internal placeholder must never reach the wire"
     );
     bridge.shutdown().await;
@@ -326,6 +326,81 @@ async fn request_extraction_reads_the_native_request_shape() {
     assert_eq!(inputs.user_query.as_deref(), Some("fix the test"));
     assert_eq!(inputs.working_dir.as_deref(), Some("/work"));
     assert!(inputs.tool_results.is_empty());
+}
+
+#[tokio::test]
+async fn a_server_backed_task_is_not_upgraded_again() {
+    // Regression: re-sending CreateTask for a task the client already treats as
+    // server-backed fails with `UnexpectedUpgrade`, so the bridge must only emit
+    // it when the app layer says the conversation is new.
+    if !node_available() {
+        eprintln!("NOT RUN: node is unavailable");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let captures = dir.path().join("captures.json");
+    let steps = serde_json::json!([
+        {
+            "kind": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "bash",
+            "argumentChunks": ["{\"command\":\"echo hi\"}"]
+        },
+        { "kind": "text", "chunks": ["done"] }
+    ]);
+    let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    let mut bridge = spawn_bridge_with_task(dir.path(), profile(&fixture.base_url, true), Some("sk-fixture"), "existing-task", false).await;
+    let mut stream = bridge.start_turn("conv-1", "run echo hi".to_string()).await.expect("turn starts");
+    let paused = collect_until(&mut stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+    assert!(
+        !paused.iter().any(|event| matches!(event, BridgeEvent::CreateTask { .. })),
+        "a server-backed task must not be upgraded again"
+    );
+    let inputs = RequestInputs {
+        conversation_id: "conv-1".into(),
+        task_id: "existing-task".into(),
+        ..Default::default()
+    };
+    let mut writer = writer_for(&inputs, "req-1", "run-1");
+    let warp_events: Vec<api::ResponseEvent> = paused.iter().flat_map(|event| writer.write(event)).collect();
+    let summary = summarize_events(&warp_events);
+    assert_eq!(summary, vec!["init", "add_messages", "finished"], "no create_task: {summary:?}");
+    bridge.shutdown().await;
+}
+
+#[tokio::test]
+async fn new_conversations_without_a_task_context_are_accepted() {
+    // Regression: the native client sends no task context for a brand-new
+    // conversation (the real server generates the task id). The adapter must
+    // accept that instead of failing the request.
+    let request = api::Request {
+        task_context: None,
+        input: Some(api::request::Input {
+            r#type: Some(api::request::input::Type::UserInputs(api::request::input::UserInputs {
+                inputs: vec![api::request::input::user_inputs::UserInput {
+                    input: Some(api::request::input::user_inputs::user_input::Input::UserQuery(
+                        api::request::input::UserQuery { query: "hello".into(), ..Default::default() },
+                    )),
+                }],
+            })),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let inputs = extract_request_inputs(&request).expect("extracts without a task context");
+    assert!(inputs.task_id.is_empty(), "the caller generates the task id");
+    assert_eq!(inputs.user_query.as_deref(), Some("hello"));
+
+    // A request with tasks still yields the root task id.
+    let with_tasks = api::Request {
+        task_context: Some(api::request::TaskContext {
+            tasks: vec![api::Task { id: "root-task".into(), ..Default::default() }],
+        }),
+        ..Default::default()
+    };
+    let inputs = extract_request_inputs(&with_tasks).expect("extracts");
+    assert_eq!(inputs.task_id, "root-task");
+    assert_eq!(inputs.conversation_id, "root-task");
 }
 
 #[tokio::test]

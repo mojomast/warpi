@@ -12,9 +12,9 @@ use warp_core::channel::{Channel, ChannelConfig, ChannelState, OzConfig, WarpSer
 
 fn main() -> Result<()> {
     let mut state = ChannelState::new(
-        Channel::Oss,
+        Channel::Warpi,
         ChannelConfig {
-            app_id: AppId::new("dev", "warp", "WarpTui"),
+            app_id: AppId::new("dev", "warpi", "WarpiTui"),
             logfile_name: "warp-tui.log".into(),
             server_config: WarpServerConfig::production(),
             oz_config: OzConfig::production(),

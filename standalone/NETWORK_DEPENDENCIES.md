@@ -1,4 +1,4 @@
-# Network dependencies
+# Network dependencies (warpi)
 
 Inventory of application-managed network paths, what the standalone fork does
 with each, and how it is tested. "Disabled" means the code path is not
@@ -9,6 +9,7 @@ request fails at the local auth boundary before any socket is opened.
 
 | # | Path | Source | Standalone behaviour | Evidence |
 | --- | --- | --- | --- | --- |
+| 0 | Settings "Test connection" probe (`GET {base}/models`) | `app/src/settings_view/local_provider_page.rs` | Only when the user clicks the button; goes to the configured profile's origin and nowhere else. A 404 is reported as reachable-with-note. | `evidence/gui-test-connection.png`; fixture capture `GET /v1/models` |
 | 1 | Agent inference (`/ai/multi-agent`) | `app/src/ai/agent/api/impl.rs`, `crates/warp_multi_agent_client` | **Replaced.** Branch to `standalone_agent` happens before any cloud call. No fallback. | `crates/standalone_agent/tests/vertical_slice.rs` (two provider requests, none to Warp); `app/src/ai/standalone/mod.rs` |
 | 2 | Passive suggestions (`/ai/passive-suggestions`) | `app/src/ai/blocklist/passive_suggestions/maa.rs` | Not routed locally. Reachable only if the user enables passive AI; requires an access token, which a signed-out profile does not have. | `AuthSession::get_or_refresh_access_token` bails locally when credentials are `None` (`crates/warp_server_client/src/auth/session.rs:97`) |
 | 3 | Auth: anonymous user, Firebase tokens, device flow | `crates/warp_server_client/src/auth/*`, `app/src/auth/auth_manager.rs` | Not used in standalone mode; no account is created or required. | `AISettings::is_any_ai_enabled` standalone exception; no login UI needed |

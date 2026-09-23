@@ -36,7 +36,7 @@ fn debugging_payload_is_id_on_non_dogfood_channels() {
         Channel::Stable,
         Channel::Preview,
         Channel::Integration,
-        Channel::Oss,
+        Channel::Warpi,
     ] {
         assert_eq!(
             token.debugging_payload_for_channel(None, channel),

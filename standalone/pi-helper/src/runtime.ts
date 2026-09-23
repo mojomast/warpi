@@ -615,7 +615,7 @@ function providerRegistration(provider: ProviderConfig): Parameters<ModelRuntime
   // main.ts strips the Authorization header at the HTTP boundary for this
   // profile's origin. The auth=none test asserts that neither the placeholder
   // nor any Authorization header reaches the wire.
-  const apiKey = provider.auth.kind === "none" ? "warposs-no-auth" : provider.auth.api_key;
+  const apiKey = provider.auth.kind === "none" ? "warpi-no-auth" : provider.auth.api_key;
   return {
     name: provider.name,
     baseUrl: provider.base_url,

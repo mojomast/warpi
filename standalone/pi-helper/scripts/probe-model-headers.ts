@@ -22,7 +22,7 @@ const port = (server.address() as { port: number }).port;
 for (const label of ["model-header-null", "extension-header-null"]) {
   const rt = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
   rt.registerProvider("p", {
-    name: "fixture", baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "warposs-no-auth", authHeader: true,
+    name: "fixture", baseUrl: `http://127.0.0.1:${port}/v1`, api: "openai-completions", apiKey: "warpi-no-auth", authHeader: true,
     ...(label === "extension-header-null" ? { headers: { Authorization: null } as never } : {}),
     models: [{ id: "m", name: "m", api: "openai-completions", reasoning: false, input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024,

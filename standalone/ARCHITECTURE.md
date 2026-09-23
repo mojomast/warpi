@@ -1,8 +1,7 @@
-# Architecture
+# Architecture (warpi)
 
-Standalone Warp agent backend: the native Warp agent experience without a Warp
-account or Warp servers, driving inference directly to a user-configured
-OpenAI-compatible endpoint.
+warpi: the native Warp agent experience without a Warp account or Warp servers,
+driving inference directly to a user-configured OpenAI-compatible endpoint.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -83,7 +82,7 @@ continues (or the user's next message supersedes the run).
    `auth = none` resolves nothing and must not put anything on the wire.
 3. `helper` spawns `node <helper>/dist/main.js` with an explicit argv, a
    controlled working directory, and an allowlisted environment (`PATH`,
-   `LANG`, `LC_ALL`, plus `HOME`/`TMPDIR`/`WARPOS_PI_SCRATCH_DIR`/`PI_OFFLINE`
+   `LANG`, `LC_ALL`, plus `HOME`/`TMPDIR`/`WARPI_PI_SCRATCH_DIR`/`PI_OFFLINE`
    set to fork-private values). Stdout is parsed as framed protocol; stderr is
    drained independently into a bounded tail.
 4. `bridge` keeps per-conversation state: session generation, the current Pi
@@ -99,10 +98,30 @@ continues (or the user's next message supersedes the run).
 
 ## Standalone mode in the Warp app
 
+### Provider configuration and model display
+
+- **Settings page** `app/src/settings_view/local_provider_page.rs` (Settings →
+  Agents → **Local Pi provider**): edits the active profile (display name, base
+  URL, model id, context/output limits), toggles standalone mode, switches
+  authentication between `none` and an API key (written to the OS secret store
+  under `warpi/profile/<id>`), creates/deletes profiles, and runs a
+  **Test connection** probe against `{base}/models`. A missing `/models`
+  endpoint reports success-with-note, because v1 supports manual model ids.
+- **Model picker**: when standalone mode is enabled, `LLMPreferences` carries a
+  synthetic `LLMInfo` for the active profile (`standalone:<profile-id>`), so the
+  native model chip and picker show the local model instead of the cloud
+  default. Selecting another model changes only the label: standalone routing
+  always uses the configured profile. The entry refreshes immediately after a
+  save, without a restart.
+- **Conversation identity**: `app/src/ai/standalone/mod.rs` generates a Warp
+  task id for brand-new conversations (matching the real server's first
+  `CreateTask`) and reuses it for every exchange; `CreateTask` is sent only when
+  the client does not already have a server-backed task.
+
 `app/src/ai/standalone/mod.rs`:
 
 - Loads `standalone/config.json` from the fork's private data directory (or
-  `WARPOS_STANDALONE_CONFIG`), validates the profile, and caches it.
+  `WARPI_STANDALONE_CONFIG`), validates the profile, and caches it.
 - `RequestParams::new` attaches a `StandaloneRequestConfig` to the request when
   standalone mode is enabled.
 - `app/src/ai/agent/api/impl.rs::generate_multi_agent_output` branches to the

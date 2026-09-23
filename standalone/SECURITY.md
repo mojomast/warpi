@@ -1,4 +1,4 @@
-# Security model
+# Security model (warpi)
 
 Honest statement of what is and is not protected. The Pi helper is **not** a
 sandbox, and nothing here claims otherwise.
@@ -29,8 +29,8 @@ sandbox, and nothing here claims otherwise.
   DPAPI, Linux Secret Service with the platform fallback) and is read into an
   in-memory `SecretString` that redacts itself in `Debug`/`Display` and zeroizes
   on drop.
-- The key travels to the helper only inside the private stdio `session.open`
-  frame. That frame is never persisted; the helper's session files contain the
+- The key is written to the OS secret store by the settings page and travels to
+  the helper only inside the private stdio `session.open` frame. That frame is never persisted; the helper's session files contain the
   model transcript and provider/model ids, not the key.
 - `auth = none` sends no `Authorization` header. Pi's SDK requires a configured
   credential before it will run a turn, so the helper registers a non-secret

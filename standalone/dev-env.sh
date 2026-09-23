@@ -7,3 +7,9 @@
 export PROTOC="${PROTOC:-$HOME/.local/share/protoc/bin/protoc}"
 export PATH="$HOME/.local/venvs/tools/bin:$PATH"
 export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+# This audit machine is disk-constrained; incremental artifacts are large and
+# are not needed for correctness. Re-enable locally on a normal machine.
+export CARGO_INCREMENTAL=0
+# This box has libfontconfig.so.1 but no fontconfig.pc; use the crate's dlopen
+# path (which is what the GUI uses at runtime on Linux anyway).
+export RUST_FONTCONFIG_DLOPEN=1

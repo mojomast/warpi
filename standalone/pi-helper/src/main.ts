@@ -31,7 +31,7 @@ function enforceNodeVersion(): void {
   const [major = 0, minor = 0] = process.versions.node.split(".").map((part) => Number.parseInt(part, 10));
   if (major < REQUIRED_NODE_MAJOR || (major === REQUIRED_NODE_MAJOR && minor < REQUIRED_NODE_MINOR)) {
     process.stderr.write(
-      `warposs-pi-runtime requires Node >= ${REQUIRED_NODE_MAJOR}.${REQUIRED_NODE_MINOR}.0, found ${process.versions.node}\n`,
+      `warpi-pi-runtime requires Node >= ${REQUIRED_NODE_MAJOR}.${REQUIRED_NODE_MINOR}.0, found ${process.versions.node}\n`,
     );
     process.exit(2);
   }
@@ -159,7 +159,7 @@ function main(): void {
   installNoAuthTransportPolicy();
 
   // Fork-private scratch directory for anything the SDK needs at startup.
-  const scratchDir = process.env.WARPOS_PI_SCRATCH_DIR;
+  const scratchDir = process.env.WARPI_PI_SCRATCH_DIR;
   if (typeof scratchDir === "string" && scratchDir.length > 0) {
     mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
     process.env.TMPDIR = scratchDir;

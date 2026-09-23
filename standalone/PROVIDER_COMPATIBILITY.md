@@ -1,4 +1,4 @@
-# Provider compatibility
+# Provider compatibility (warpi)
 
 What v1 supports, what it explicitly rejects, and what remains unverified.
 Nothing in this table is inferred from a model name.
@@ -61,6 +61,18 @@ a partial execution.
 Deferred (not offered in v1): file deletion, background/long-running command
 control, MCP tools and resources, subagents, computer use, web search,
 documents, skills, artifacts.
+
+## "Test connection" semantics
+
+The settings page probes `GET {base}/models` with the profile's authentication
+mode and an 8-second timeout.
+
+| Outcome | Reported |
+| --- | --- |
+| 2xx | reachable; if the body lists models, the count is shown |
+| 404 | reachable; `/models` is optional and the model id is configured manually |
+| 401/403/5xx | failure with the status code |
+| connection/DNS/timeout | failure with the transport error |
 
 ## Failure classification
 

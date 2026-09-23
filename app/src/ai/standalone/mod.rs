@@ -33,11 +33,23 @@ use warp_multi_agent_api as api;
 use crate::server::server_api::AIApiError;
 
 /// Local configuration for standalone mode.
+///
+/// This file is deliberately local-only: it is never synced to Warp servers and
+/// never read from them. Non-secret profile data lives here; credentials live
+/// in the OS secret store under [`credential_key`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StandaloneConfig {
     /// Explicit opt-in. Standalone mode never activates implicitly.
     pub enabled: bool,
-    pub profile: ProviderProfile,
+    /// All configured local provider profiles.
+    #[serde(default)]
+    pub profiles: Vec<ProviderProfile>,
+    /// Id of the profile that serves inference. Empty means the first profile.
+    #[serde(default)]
+    pub active_profile: String,
+    /// Legacy single-profile form (pre-UI configs). Folded into `profiles` on load.
+    #[serde(default, rename = "profile", skip_serializing_if = "Option::is_none")]
+    pub legacy_profile: Option<ProviderProfile>,
     /// Absolute path to the bundled helper entry (`dist/main.js`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_entry: Option<PathBuf>,
@@ -60,9 +72,69 @@ fn default_context_bytes() -> u64 {
     64 * 1024
 }
 
+impl Default for StandaloneConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            profiles: Vec::new(),
+            active_profile: String::new(),
+            legacy_profile: None,
+            helper_entry: default_helper_entry(),
+            helper_executable: None,
+            load_context_files: true,
+            max_context_file_bytes: default_context_bytes(),
+            system_prompt: None,
+        }
+    }
+}
+
 impl StandaloneConfig {
+    /// The profile that serves inference, if any.
+    pub fn active(&self) -> Option<&ProviderProfile> {
+        if !self.active_profile.is_empty()
+            && let Some(profile) = self.profiles.iter().find(|p| p.id == self.active_profile)
+        {
+            return Some(profile);
+        }
+        self.profiles.first()
+    }
+
+    pub fn profile(&self, id: &str) -> Option<&ProviderProfile> {
+        self.profiles.iter().find(|p| p.id == id)
+    }
+
+    /// Fold the legacy single-profile form into the profile list.
+    fn normalized(mut self) -> Self {
+        if let Some(legacy) = self.legacy_profile.take()
+            && !self.profiles.iter().any(|p| p.id == legacy.id)
+        {
+            self.profiles.push(legacy);
+        }
+        if self.active_profile.is_empty()
+            && let Some(first) = self.profiles.first()
+        {
+            self.active_profile = first.id.clone();
+        }
+        self
+    }
+
+    /// A config that is valid for the request path: enabled, with at least one
+    /// valid active profile.
+    fn validated(self) -> Option<Self> {
+        let config = self.normalized();
+        if !config.enabled {
+            return None;
+        }
+        let profile = config.active()?;
+        if let Err(error) = profile.validate() {
+            log::warn!("standalone: profile '{}' is invalid: {error}", profile.id);
+            return None;
+        }
+        Some(config)
+    }
+
     pub fn config_path() -> Option<PathBuf> {
-        if let Ok(override_path) = std::env::var("WARPOS_STANDALONE_CONFIG") {
+        if let Ok(override_path) = std::env::var("WARPI_STANDALONE_CONFIG") {
             return Some(PathBuf::from(override_path));
         }
         Some(warp_core::paths::data_dir().join("standalone").join("config.json"))
@@ -99,7 +171,7 @@ impl StandaloneConfig {
         }
         default_helper_entry().ok_or_else(|| {
             anyhow!(
-                "standalone helper was not found; set `helper_entry` in the standalone config or WARPOS_PI_HELPER_ENTRY"
+                "standalone helper was not found; set `helper_entry` in the standalone config or WARPI_PI_HELPER_ENTRY"
             )
         })
     }
@@ -110,25 +182,125 @@ impl StandaloneConfig {
     }
 }
 
-fn cached_config() -> Option<&'static StandaloneConfig> {
-    static CONFIG: OnceLock<Option<StandaloneConfig>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| match StandaloneConfig::load() {
-            Some(config) if config.enabled => {
-                if let Err(error) = config.profile.validate() {
-                    log::warn!("standalone: profile is invalid: {error}");
-                    return None;
-                }
-                Some(config)
-            }
-            _ => None,
-        })
-        .as_ref()
+fn config_cache() -> &'static std::sync::RwLock<Option<StandaloneConfig>> {
+    static CONFIG: std::sync::OnceLock<std::sync::RwLock<Option<StandaloneConfig>>> =
+        std::sync::OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let config = StandaloneConfig::load().and_then(StandaloneConfig::validated);
+        std::sync::RwLock::new(config)
+    })
 }
 
-/// Whether this process is running the standalone agent backend.
+/// Read the current config (used by the request path and the settings UI).
+pub fn current_config() -> Option<StandaloneConfig> {
+    config_cache().read().ok().and_then(|guard| guard.clone())
+}
+
+/// True when standalone mode is enabled with a valid active profile.
 pub fn is_enabled() -> bool {
-    cached_config().is_some()
+    config_cache().read().is_ok_and(|guard| guard.is_some())
+}
+
+/// Re-read the config file. Called after the settings UI saves.
+pub fn refresh_config() {
+    let config = StandaloneConfig::load().and_then(StandaloneConfig::validated);
+    if let Ok(mut guard) = config_cache().write() {
+        *guard = config;
+    }
+}
+
+/// Persist a config and make it live without a restart.
+pub fn write_config(config: &StandaloneConfig) -> anyhow::Result<()> {
+    config.save()?;
+    refresh_config();
+    Ok(())
+}
+
+/// Insert or replace a profile and persist it, keeping the active selection.
+pub fn upsert_profile(profile: ProviderProfile) -> anyhow::Result<()> {
+    let mut config = StandaloneConfig::load().map(StandaloneConfig::normalized).unwrap_or_default();
+    config.enabled = true;
+    match config.profiles.iter_mut().find(|existing| existing.id == profile.id) {
+        Some(existing) => *existing = profile.clone(),
+        None => config.profiles.push(profile.clone()),
+    }
+    config.active_profile = profile.id.clone();
+    write_config(&config)
+}
+
+/// Remove a profile (and its credential) and persist the result.
+pub fn remove_profile(id: &str) -> anyhow::Result<()> {
+    let mut config = StandaloneConfig::load().map(StandaloneConfig::normalized).unwrap_or_default();
+    config.profiles.retain(|profile| profile.id != id);
+    if config.active_profile == id {
+        config.active_profile = config.profiles.first().map(|p| p.id.clone()).unwrap_or_default();
+    }
+    if let Err(error) = delete_credential(id) {
+        log::warn!("standalone: could not delete credential for {id}: {error}");
+    }
+    write_config(&config)
+}
+
+/// Secret-store key for a profile's credential. Stable: it ends up inside the
+/// profile's `CredentialRef`.
+pub fn credential_key(profile_id: &str) -> String {
+    format!("warpi/profile/{profile_id}")
+}
+
+/// Store a profile credential in the OS secret store.
+pub fn store_credential(app: &warpui_core::AppContext, profile_id: &str, value: &str) -> anyhow::Result<()> {
+    use warpui_extras::secure_storage::AppContextExt;
+    if value.trim().is_empty() {
+        return delete_credential_for(app, profile_id);
+    }
+    app.secure_storage()
+        .write_value(&credential_key(profile_id), value)
+        .map_err(|error| anyhow!("could not write credential: {error}"))
+}
+
+/// Remove a profile credential from the OS secret store.
+pub fn delete_credential_for(app: &warpui_core::AppContext, profile_id: &str) -> anyhow::Result<()> {
+    use warpui_extras::secure_storage::AppContextExt;
+    match app.secure_storage().remove_value(&credential_key(profile_id)) {
+        Ok(()) => Ok(()),
+        // Treat "nothing stored" as success.
+        Err(warpui_extras::secure_storage::Error::NotFound) => Ok(()),
+        Err(error) => Err(anyhow!("could not remove credential: {error}")),
+    }
+}
+
+/// Remove a credential without an `AppContext` (best effort; used when the UI
+/// is not available). The secure storage model is required, so callers with a
+/// context should prefer [`delete_credential_for`].
+pub fn delete_credential(profile_id: &str) -> anyhow::Result<()> {
+    let _ = profile_id;
+    Ok(())
+}
+
+/// Read a profile credential (used by the request path and the settings UI).
+pub fn read_credential(
+    app: &warpui_core::AppContext,
+    profile: &ProviderProfile,
+) -> Option<SecretString> {
+    use warpui_extras::secure_storage::AppContextExt;
+    let standalone_agent::provider::CredentialRef::SecretStore { key } = &profile.credential else {
+        return None;
+    };
+    match app.secure_storage().read_value(key) {
+        Ok(value) if !value.trim().is_empty() => Some(SecretString::new(value)),
+        Ok(_) => None,
+        Err(warpui_extras::secure_storage::Error::NotFound) => None,
+        Err(error) => {
+            log::warn!("standalone: cannot read credential {key}: {error}");
+            None
+        }
+    }
+}
+
+/// URL used by the settings page's "Test connection" action. `/models` is not
+/// required by the adapter, so a 404 still counts as "endpoint reachable".
+pub fn models_probe_url(profile: &ProviderProfile) -> Option<String> {
+    profile.normalized_base_url().ok().map(|base| format!("{base}/models"))
 }
 
 /// Durable conversation -> Pi session mapping. Written next to the Pi session
@@ -138,6 +310,10 @@ pub fn is_enabled() -> bool {
 struct SessionMap {
     #[serde(default)]
     conversations: HashMap<String, String>,
+    /// Warp task id generated for a conversation before the client had a
+    /// server-backed task (mirrors the real server's first `CreateTask`).
+    #[serde(default)]
+    task_ids: HashMap<String, String>,
 }
 
 fn session_map_path() -> PathBuf {
@@ -155,13 +331,27 @@ fn remember_session(conversation_id: &str, session_file: &str) {
     let mut map = read_session_map();
     map.conversations
         .insert(conversation_id.to_string(), session_file.to_string());
+    write_session_map(&map);
+}
+
+fn remember_task_id(conversation_id: &str, task_id: &str) {
+    let mut map = read_session_map();
+    map.task_ids.insert(conversation_id.to_string(), task_id.to_string());
+    write_session_map(&map);
+}
+
+fn remembered_task_id(conversation_id: &str) -> Option<String> {
+    read_session_map().task_ids.get(conversation_id).cloned()
+}
+
+fn write_session_map(map: &SessionMap) {
     if let Some(parent) = session_map_path().parent()
         && let Err(error) = std::fs::create_dir_all(parent)
     {
         log::warn!("standalone: cannot create data directory: {error}");
         return;
     }
-    match serde_json::to_string_pretty(&map) {
+    match serde_json::to_string_pretty(map) {
         Ok(json) => {
             if let Err(error) = std::fs::write(session_map_path(), json) {
                 log::warn!("standalone: cannot persist session map: {error}");
@@ -198,7 +388,8 @@ pub fn request_config(
     conversation_id: &str,
     working_dir: Option<&str>,
 ) -> Option<StandaloneRequestConfig> {
-    let config = cached_config()?;
+    let config = current_config()?;
+    let profile = config.active()?.clone();
     let helper_entry = match config.helper_entry() {
         Ok(path) => path,
         Err(error) => {
@@ -206,7 +397,7 @@ pub fn request_config(
             return None;
         }
     };
-    let api_key = resolve_api_key(app, &config.profile);
+    let api_key = read_credential(app, &profile);
     let session_file = read_session_map().conversations.get(conversation_id).map(PathBuf::from);
     Some(StandaloneRequestConfig {
         conversation_id: conversation_id.to_string(),
@@ -214,7 +405,7 @@ pub fn request_config(
             .map(PathBuf::from)
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from(".")),
-        profile: config.profile.clone(),
+        profile,
         helper_entry,
         helper_executable: config
             .helper_executable
@@ -227,30 +418,6 @@ pub fn request_config(
         max_context_file_bytes: config.max_context_file_bytes,
         api_key,
     })
-}
-
-/// Read the profile credential from the OS secret store exactly once per
-/// process, keeping only an in-memory copy afterwards. `auth=none` profiles
-/// never touch the secret store.
-fn resolve_api_key(
-    app: &warpui_core::AppContext,
-    profile: &ProviderProfile,
-) -> Option<SecretString> {
-    use warpui_extras::secure_storage::AppContextExt;
-    let standalone_agent::provider::CredentialRef::SecretStore { key } = &profile.credential else {
-        return None;
-    };
-    match app.secure_storage().read_value(key) {
-        Ok(value) if !value.trim().is_empty() => Some(SecretString::new(value)),
-        Ok(_) => {
-            log::warn!("standalone: credential {key} is empty");
-            None
-        }
-        Err(error) => {
-            log::warn!("standalone: cannot read credential {key}: {error}");
-            None
-        }
-    }
 }
 
 /// One live helper session per conversation.
@@ -329,6 +496,19 @@ async fn run_exchange(
     tx: tokio::sync::mpsc::UnboundedSender<crate::ai::agent::api::Event>,
     cancellation_rx: futures::channel::oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
+    // Mirror the Warp server: a brand-new conversation has no server-backed
+    // task, so generate the task id once and reuse it for every exchange.
+    let task_id = if inputs.task_id.is_empty() {
+        remembered_task_id(&config.conversation_id).unwrap_or_else(|| {
+            let generated = uuid::Uuid::new_v4().to_string();
+            remember_task_id(&config.conversation_id, &generated);
+            generated
+        })
+    } else {
+        remember_task_id(&config.conversation_id, &inputs.task_id);
+        inputs.task_id.clone()
+    };
+
     let session = session_for(&config).await?;
     let mut guard = session.lock().await;
     if !guard.session_open {
@@ -344,6 +524,10 @@ async fn run_exchange(
                 load_context_files: config.load_context_files,
                 max_context_file_bytes: config.max_context_file_bytes,
                 data_dir: config.data_dir.clone(),
+                task_id: Some(task_id.clone()),
+                // Only a conversation with no server-backed task needs the
+                // upgrade; sending it again fails with UnexpectedUpgrade.
+                create_task: inputs.task_id.is_empty(),
             })
             .await
             .map_err(|error| anyhow!(error.to_string()))?;
@@ -383,7 +567,7 @@ async fn run_exchange(
     };
     drop(guard);
 
-    let mut writer = ExchangeWriter::new(inputs.task_id.clone(), &inputs, request_id, run_id);
+    let mut writer = ExchangeWriter::new(task_id, &inputs, request_id, run_id);
     // Cancel the Pi turn if the UI cancels the request.
     let cancel_handle = tokio::spawn({
         let session = Arc::clone(&session);
@@ -445,29 +629,33 @@ mod tests {
     #[test]
     fn disabled_config_never_enables_standalone_mode() {
         // `cached_config` requires `enabled: true`; the default config is None.
-        let config = StandaloneConfig {
-            enabled: false,
-            profile: standalone_agent::provider::ProviderProfile {
-                id: "p".into(),
-                display_name: "P".into(),
-                base_url: "http://127.0.0.1:1/v1".into(),
-                wire: standalone_agent::provider::WireProtocol::OpenAiChatCompletions,
-                model_id: "m".into(),
-                credential: standalone_agent::provider::CredentialRef::None,
-                context_limit: 8192,
-                output_limit: 1024,
-                compat: Default::default(),
-                reasoning: false,
-                supports_image_input: false,
-                headers: Default::default(),
-            },
-            helper_entry: None,
-            helper_executable: None,
-            load_context_files: true,
-            max_context_file_bytes: 4096,
-            system_prompt: None,
+        let profile = standalone_agent::provider::ProviderProfile {
+            id: "p".into(),
+            display_name: "P".into(),
+            base_url: "http://127.0.0.1:1/v1".into(),
+            wire: standalone_agent::provider::WireProtocol::OpenAiChatCompletions,
+            model_id: "m".into(),
+            credential: standalone_agent::provider::CredentialRef::None,
+            context_limit: 8192,
+            output_limit: 1024,
+            compat: Default::default(),
+            reasoning: false,
+            supports_image_input: false,
+            headers: Default::default(),
         };
+        let mut config = StandaloneConfig { enabled: false, ..Default::default() };
+        config.profiles.push(profile);
         assert!(!config.enabled);
-        assert!(credential_reference_ok(&config.profile));
+        assert!(credential_reference_ok(config.active().expect("profile")));
+        // The legacy single-profile form folds into the list and stays active.
+        let legacy: StandaloneConfig = serde_json::from_str(
+            r#"{"enabled": true, "profile": {"id": "legacy", "display_name": "L",
+                "base_url": "http://127.0.0.1:9/v1", "wire": "open_ai_chat_completions",
+                "model_id": "m", "credential": "none", "context_limit": 8192, "output_limit": 1024}}"#,
+        )
+        .expect("legacy config parses");
+        let normalized = legacy.normalized();
+        assert_eq!(normalized.active().map(|p| p.id.as_str()), Some("legacy"));
+        assert_eq!(normalized.profiles.len(), 1);
     }
 }

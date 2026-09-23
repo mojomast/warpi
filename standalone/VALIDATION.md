@@ -1,7 +1,7 @@
-# Validation evidence
+# Validation evidence (warpi)
 
 Status legend: **PASS** (reproduced here), **FAIL**, **NOT RUN** (no runner or
-not attempted). Every claim below names the command that produced it.
+not attempted). Every claim names the command or the artifact that produced it.
 
 ## Source pins
 
@@ -9,122 +9,117 @@ not attempted). Every claim below names the command that produced it.
 | --- | --- |
 | Warp baseline | `71088ba18d27114ccfb358901c66b54220cf30d0` |
 | warp-proto-apis | `f5c1878026bc11f429260c5e798e7bab6ed4e118` (unchanged pin) |
-| Donor (OpenWarp adapter) | `5045d30a98de5432cedfd256e15e56675696d0b7` |
+| Donor (OpenWarp adapter) | `5045d30a98de5432cedfd256e15e56675696d0b7`, MIT — `DONOR-ATTRIBUTION.md` |
 | Pi SDK | `@earendil-works/pi-coding-agent@0.84.2`, `typebox@1.3.7` |
-| Fork commit under test | see `git log -1` on branch `standalone-pi-backend` |
+| Fork branch | `standalone-pi-backend` on top of the pinned baseline; nothing pushed |
 
 ## Environment
 
-- Linux x86_64, 4 cores, 15 GiB RAM, no sudo.
-- Rust 1.92.0 (pinned by `rust-toolchain.toml`), Node v22.19.0.
-- Development-only shims used because the machine has no apt access:
-  `protoc 25.1`, `cmake 3.31.6` (venv wheel), and an `alsa.pc` stub pointing at
-  the system `libasound.so.2`. See `standalone/dev-env.sh`; these are **not**
-  part of the product.
+Linux x86_64, 4 cores, 15 GiB RAM, no sudo, Rust 1.92.0, Node v22.19.0.
+Development-only shims (no apt access): `protoc 25.1`, `cmake 3.31.6`,
+an `alsa.pc` stub, `RUST_FONTCONFIG_DLOPEN=1`, `CARGO_INCREMENTAL=0` — see
+`dev-env.sh`; none of them ship with the product.
 
 ## Automated tests
 
-### Helper (`standalone/pi-helper`)
+| Suite | Command | Result |
+| --- | --- | --- |
+| Rust backend | `cargo test -p standalone_agent` | **PASS** — 24 tests: 14 unit + 1 session-isolation + 9 vertical slice (`evidence/rust-tests.log`) |
+| Pi helper | `cd standalone/pi-helper && npm test` | **PASS** — 13 tests (`evidence/helper-tests.log`) |
+| App compile | `cargo check -p warp --bin warpi --features gui` | **PASS** |
+| App test targets | `cargo check -p warp --tests --features gui` | **PASS** |
+| Native build | `cargo build -p warp --bin warpi --features gui` | **PASS** — 4m16s, 1.0 GB debug binary (`evidence/gui-build.log`) |
 
-Command:
+Highlights covered by the Rust suites: the M1 round trip against a loopback
+fixture with the real helper; `auth=none` wire assertions; two-session
+isolation; cancellation; provider-failure classification; foreign/duplicate/
+stale tool results; new conversations with no task context; and the
+`CreateTask` gating fix (a server-backed task is never upgraded twice).
 
-```bash
-cd standalone/pi-helper
-npx tsc -p tsconfig.json          # typecheck + build (PASS, no diagnostics)
-node --import tsx --test test/*.test.ts
-```
+Helper suites cover: protocol validation (version, size, order, UTF-8-safe
+truncation), broker semantics (batching, duplicates, oversized arguments,
+aborts), compaction settings, and four end-to-end provider scenarios including
+`auth=none` and fragmented tool-call arguments.
 
-Result: **PASS** — 13 tests, 0 failures (`evidence/helper-tests.log`).
+## Native GUI verification (PASS)
 
-| Test | What it proves |
-| --- | --- |
-| `runtime-smoke: round trip (api key)` | Model → `bash` tool call (fragmented JSON) → helper suspends → Rust-style resume → second provider request → final text. Asserts exactly two provider requests, one user message, one tool result, `Authorization: Bearer sk-fixture`. |
-| `runtime-smoke: round trip (auth none)` | Same flow with `auth=none`, asserting **no** `Authorization` header and no placeholder on the wire. |
-| `runtime-smoke: cancel` | Cancelling while awaiting a tool settles the turn; a later turn in the same session still works; a rejected tool result surfaces as a failed tool call. |
-| `runtime-smoke: provider error` | A 401 becomes one terminal `turn.failed` with retry disabled, exactly one provider request. |
-| `protocol` | Version mismatch, non-JSON, bad types, oversized frames, UTF-8-safe truncation. |
-| `workspace-tools` | Canonical tool mapping, per-owner batching, duplicate ids, oversized arguments, foreign delivery, abort handling. |
-| `compaction-settings` | Reserve/keep-recent derivations scale with the context window. |
+Everything below was driven in the real `warpi` window under Xvfb + Mesa
+lavapipe with the deterministic loopback fixture. No Warp account existed, and
+no Warp server received agent traffic.
 
-### Rust backend (`crates/standalone_agent`)
+| Step | Result | Artifact |
+| --- | --- | --- |
+| Native window, onboarding, terminal | **PASS** | `evidence/gui-native-window.png` |
+| Fresh agent conversation starts with the local model selected (`GUI Fixture (local endpoint · fixture-model)` in the model chip) | **PASS** | `evidence/gui-round-trip-complete.png` |
+| Prompt → local provider receives the brokered tool schema and returns a `bash` tool call | **PASS** | fixture captures: request 1 = `[system, user]`, tool schema = our six tools |
+| **Native tool approval card** ("OK if I run this command and read the output?", Reject/Edit/Run) | **PASS** | `evidence/gui-tool-approval.png` |
+| Click **Run** → the command executes in a normal Warp block | **PASS** | `evidence/gui-round-trip-complete.png` |
+| Result returns to Pi → **second** provider request → final assistant text "Warpi round trip complete." | **PASS** | fixture captures: request 2 = `[system, user, assistant, tool]`; screenshot above |
+| Provider settings page (Settings → Agents → **Local Pi provider**) | **PASS** | `evidence/gui-provider-settings.png` |
+| **Test connection** action → `GET /v1/models` → "Endpoint reachable (HTTP 200 OK); 1 model(s) reported." | **PASS** | `evidence/gui-test-connection.png` |
+| Fork-specific identity: separate data dirs, own window class, onboarding state, `warpi.log` | **PASS** | app log line `channel: Warpi … AppId { dev.warpi.Warpi }` |
 
-Command: `cargo test -p standalone_agent`
+Three real integration bugs were found by running the GUI and fixed with
+regression tests:
 
-Result: **PASS** — 22 tests, 0 failures: 14 unit + 8 integration
-(`evidence/rust-tests.log`).
+1. a hand-written config with a partial `compat` object was rejected
+   (`supports_developer_role` had no serde default);
+2. a brand-new conversation sends **no task context** (the real server
+   generates the task id) — the adapter now does the same;
+3. `CreateTask` was re-sent for a server-backed task after a restart, failing
+   with `UnexpectedUpgrade` — the adapter now sends it only for new
+   conversations.
 
-| Test | What it proves |
-| --- | --- |
-| `native_prompt_tool_result_second_request_and_final_text` | M1 vertical slice with the real helper and a real HTTP fixture: exchange 1 = `init, create_task, add_messages(tool call), finished` with a `RunShellCommand` classified `NONTRIVIAL_LOCAL_CHANGE`; exchange 2 = resumed run, streamed deltas as `add_messages` + `append_text`, `finished`; provider request 2 contains the tool result once and exactly one user message. |
-| `auth_none_never_sends_an_authorization_header` | Header audit on the fixture's captured request. |
-| `foreign_and_duplicate_tool_results_are_rejected_without_corrupting_the_turn` | Foreign result ⇒ `unknown_tool_result`; genuine result still resumes; a settled run refuses later results. |
-| `cancellation_settles_the_run_and_keeps_the_session_usable` | Cancel while awaiting tools, then a second turn plus a rejected tool result in the same session. |
-| `provider_failures_surface_as_a_single_terminal_failure` | One terminal failure, one provider request (no retry storm). |
-| `two_sessions_with_different_profiles_stay_isolated` | Two conversations, two endpoints, two model ids: results/resumes cannot cross sessions, and each endpoint sees exactly its own two requests. |
-| `request_extraction_reads_the_native_request_shape`, `tool_result_rendering_maps_shell_results_for_the_model` | Warp request/result protobuf handling, including denial rendering. |
-| `protocol`, `provider`, `secrets`, `helper` unit tests | Frame validation, URL normalization (no duplicated `/v1` or `/chat/completions`), config-key rejection, partial-compat deserialization, secret redaction, environment sanitization. |
+## Not run
 
-### Warp app
+| Item | Status | Notes |
+| --- | --- | --- |
+| Diff review / file-edit approvals in the GUI | **NOT RUN** | The `edit`/`write` paths are wired to `ApplyFileDiffs` and unit-tested at the event level; no GUI run yet. |
+| Conversation restart / idle restore in the GUI | **NOT RUN** | Durable Pi session mapping is implemented and exercised by the app code path; not yet driven through a restart in the GUI. |
+| Real (non-fixture) provider | **NOT RUN** | No authorized credentials available. No compatibility or coding-performance claims are made. |
+| Windows / macOS native build and GUI | **NOT RUN** | No runners. WSL is not a native Windows test. |
+| Full egress audit of the GUI process | **NOT RUN** | Source-level inventory in `NETWORK_DEPENDENCIES.md`; the GUI run did confirm that agent traffic went to the loopback fixture only. |
+| `warp_core` path tests on a machine without XDG overrides | **NOT RUN** | 5 of the 47 tests assert home-relative defaults and fail under this harness's `XDG_*` overrides; they pass with those unset. |
 
-Command (requires the dev shims):
+## Reproduced sequences (abridged)
 
-```bash
-source standalone/dev-env.sh
-cargo check -p warp --bin warp-oss --features gui     # PASS
-cargo build -p warp --bin warp-oss --features gui     # PASS, 4m10s, 1.0 GB debug binary
-cargo test -p standalone_agent                        # PASS (above)
-```
-
-The standalone branch, `RequestParams` change, module registration, and the
-`AISettings` exception compile and link in the real app crate
-(`evidence/gui-build.log`).
-
-## Manual / native verification
-
-| Item | Platform | Status | Notes |
-| --- | --- | --- | --- |
-| Native GUI build | Linux x86_64 | **PASS** | `target/debug/warp-oss`, 1 004 308 720 bytes |
-| Native GUI launch + render (Xvfb, Mesa lavapipe) | Linux x86_64 | **PASS** | Onboarding and terminal screenshots: `evidence/gui-shot-5.png`, `evidence/gui-run/gui-verify-5.png` |
-| Keyboard/mouse interaction with the native window | Linux x86_64 | **PASS** | Injected shell commands executed and rendered (screenshots `gui-agent-4.png`, `gui-verify-4.png`) |
-| Standalone config read by the running app | Linux x86_64 | **PASS** | The app logged `standalone: ignoring invalid config: missing field supports_developer_role` before the fix, and no warning after (`…/state/warp-oss/warp-oss.log`); the bug was fixed with a regression test |
-| Native agent flow in the GUI (prompt → tool card → approval → diff → result) | Linux | **NOT RUN** | The universal input starts an agent conversation with Ctrl+Shift+Enter; the audit's XTest harness could not synthesise that modifier combination reliably (it produced stray characters), and no input-automation tool (xdotool) is installed. The event-level flow is proven by the vertical slice; the UI rendering path is upstream code, unexercised here. |
-| Native Windows / macOS build and run | Windows, macOS | **NOT RUN** | No runners. WSL is not a native Windows GUI test and was not attempted. |
-| Real provider (non-fixture) inference | any | **NOT RUN** | No authorized credentials were available; all provider tests use the deterministic loopback fixture. No compatibility or coding-performance claims are made. |
-| Egress audit of the running GUI | Linux | **NOT RUN** | Source-level inventory only (`NETWORK_DEPENDENCIES.md`). |
-
-## Reproduced M1 sequence (abridged)
-
-From `native_prompt_tool_result_second_request_and_final_text`:
+M1 slice (automated):
 
 ```
-exchange 1 events: init, create_task, add_messages(tool_call), finished
-  tool call: tool_call_id=call_abc, RunShellCommand{command="echo hello",
-             risk_category=NONTRIVIAL_LOCAL_CHANGE, is_read_only=false}
-exchange 2 events: init, add_messages(text "all"), append_text(" done"), finished
-provider requests: 2
-  request 2 messages: [system, user, assistant(tool_calls), tool(call_abc, "hello\n")]
-  request 2 headers: authorization: Bearer sk-fixture
+exchange 1: init, create_task, add_messages(tool_call), finished
+  tool call: call_abc RunShellCommand{command="echo hello", risk_category=NONTRIVIAL_LOCAL_CHANGE}
+exchange 2: init, add_messages("all"), append_text(" done"), finished
+provider request 2 messages: [system, user, assistant(tool_calls), tool(call_abc, "hello\n")]
+```
+
+GUI slice (manual, same shape):
+
+```
+prompt  : "Run echo hello-from-warpi in the shell"
+tool    : native approval card for `echo hello-from-warpi`
+approve : Run
+result  : command block with output; provider request 2 = [system, user, assistant, tool]
+final   : "Warpi round trip complete."
 ```
 
 ## Honest risk register
 
-1. **The GUI agent flow is unverified.** The native front-end builds, launches,
-   renders, and accepts input; the agent conversation could not be started from
-   the harness. Event-level behaviour (exchanges, tool calls, approvals'
-   inputs, results) is proven with the real helper and real protobuf.
-2. **No real provider run.** Compatibility flags exist and are tested against
-   the fixture only.
+1. **GUI coverage is partial.** Tools, approvals, model chip, provider settings,
+   and the full inference round trip are verified natively. Diff review,
+   restart, and cancellation are not yet driven in the GUI.
+2. **No real provider run.** Provider compatibility flags exist and are tested
+   against the fixture only.
 3. **Unknown-outcome reconciliation is surfaced, not automated.** A crash after
-   an effect but before its result leaves an unknown state; the UI reports the
-   failure and does not retry.
+   an effect but before its result leaves an unknown state; no automatic retry.
 4. **Helper process control is single-process.** No POSIX process group or job
-   object is used; the helper spawns no children in v1.
-5. **M2 UX gap.** Endpoint/profile configuration requires writing
-   `standalone/config.json`; there is no settings page yet.
-6. **CreateTask heuristic.** If the app restarts mid-optimistic-turn, a second
-   `CreateTask` may be sent for an already server-backed task (the client logs a
-   local error and continues). Documented in `ARCHITECTURE.md`.
-7. **Two compiler warnings remain** in the built revision: an unused
-   `status_for_denied_approval` helper in `app/src/ai/standalone/mod.rs` and a
-   deprecated-but-set proto field in `warp_events.rs`. Neither affects
-   behaviour; both are cosmetic cleanups for M2.
+   object; the helper spawns no children in v1.
+5. **Packaging is not updated for the rename.** `script/linux/*` and
+   `script/windows/*` bundlers still contain the old `oss` channel case; the
+   development entrypoints (`script/run`, `script/run-tui`) and the CI check
+   job were updated. Release bundling is M5 work.
+6. **Compile warnings remain** (5 in the app crate: an unused standalone
+   helper, a deprecated proto field, and dead-code notes). None affect
+   behaviour.
+7. **macOS identity** was not exercised; the fork's bundle id/URL scheme
+   (`dev.warpi.warpi`, `warpi`) are set in the binary but unverified in a real
+   bundle.

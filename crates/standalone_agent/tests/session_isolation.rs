@@ -89,6 +89,8 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
                 load_context_files: false,
                 max_context_file_bytes: 4096,
                 data_dir: data_dir.clone(),
+                task_id: Some(conversation.to_string()),
+                create_task: true,
             })
             .await
             .expect("session opens");

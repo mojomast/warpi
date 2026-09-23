@@ -76,13 +76,13 @@ export class HelperClient {
   }
 
   static async start(options: HelperClientOptions = {}): Promise<HelperClient> {
-    const dataDir = await mkdtemp(join(tmpdir(), "warposs-helper-test-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "warpi-helper-test-"));
     const child = spawn(process.execPath, [HELPER_ENTRY], {
       cwd: options.cwd ?? dataDir,
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         HOME: dataDir,
-        WARPOS_PI_SCRATCH_DIR: join(dataDir, "scratch"),
+        WARPI_PI_SCRATCH_DIR: join(dataDir, "scratch"),
         ...options.env,
       },
       stdio: ["pipe", "pipe", "pipe"],

@@ -18,8 +18,9 @@ pub enum Channel {
     /// The internal-only HEAD build.
     Local,
 
-    /// The open-source build of Warp.
-    Oss,
+    /// The standalone local-Pi build of Warp ("warpi"):
+    /// no Warp account and no Warp servers for agent inference.
+    Warpi,
 
     /// The integration test build.
     Integration,
@@ -30,20 +31,20 @@ impl Channel {
     pub fn is_dogfood(&self) -> bool {
         match self {
             Channel::Dev | Channel::Local => true,
-            Channel::Stable | Channel::Preview | Channel::Integration | Channel::Oss => false,
+            Channel::Stable | Channel::Preview | Channel::Integration | Channel::Warpi => false,
         }
     }
 
     /// Whether this channel honors the `--server-root-url` / `--ws-server-url` /
     /// `--session-sharing-server-url` flags (and their `WARP_*` env-var equivalents).
     ///
-    /// Release channels (`Stable`, `Preview`, `Oss`) ignore these overrides so shipped
+    /// Release channels (`Stable`, `Preview`, `Warpi`) ignore these overrides so shipped
     /// builds can't be redirected away from their baked-in server URLs. Internal-only channels
     /// (`Dev`, `Local`, `Integration`) continue to honor them for local development and testing.
     pub fn allows_server_url_overrides(&self) -> bool {
         match self {
             Channel::Dev | Channel::Local | Channel::Integration => true,
-            Channel::Stable | Channel::Preview | Channel::Oss => false,
+            Channel::Stable | Channel::Preview | Channel::Warpi => false,
         }
     }
 
@@ -55,7 +56,7 @@ impl Channel {
             Channel::Preview => "oz-preview",
             Channel::Local => "oz-local",
             Channel::Integration => "oz-integration",
-            Channel::Oss => "warp-oss",
+            Channel::Warpi => "warpi",
         }
     }
 
@@ -67,7 +68,7 @@ impl Channel {
             Channel::Preview => "warpctrl-preview",
             Channel::Local => "warpctrl-local",
             Channel::Integration => "warpctrl-integration",
-            Channel::Oss => "warpctrl-oss",
+            Channel::Warpi => "warpctrl-warpi",
         }
     }
 }
@@ -80,7 +81,7 @@ impl fmt::Display for Channel {
             Channel::Dev => "dev",
             Channel::Integration => "integration",
             Channel::Local => "local",
-            Channel::Oss => "warp-oss",
+            Channel::Warpi => "warpi",
         })
     }
 }

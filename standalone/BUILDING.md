@@ -1,4 +1,4 @@
-# Build and install (development build)
+# Build and install (warpi development build)
 
 The validated target in this audit is **Linux x86_64, development build**. No
 installer or release bundle is produced yet (M5).
@@ -19,40 +19,48 @@ npm test                 # 13 tests
 
 # Build the app
 cd ../..
-cargo build -p warp --bin warp-oss --features gui
+cargo build -p warp --bin warpi --features gui
 ```
 
 The helper's `dist/` directory must exist before the app is started; at runtime
 the app finds it at `standalone/pi-helper/dist/main.js` relative to the
-executable (or via `WARPOS_PI_HELPER_ENTRY`).
+executable (or via `WARPI_PI_HELPER_ENTRY`).
 
 ## Configure standalone mode
 
-Write `<Warp data dir>/standalone/config.json` (or point
-`WARPOS_STANDALONE_CONFIG` at a file). Example with an API key stored in the
-OS secret store under the key `warposs/local`:
+The normal way to configure warpi is the in-app settings page
+(**Settings → Agents → Local Pi provider**): endpoint, model id, limits,
+authentication mode, "Test connection", and the API key (stored in the OS
+secret store). This file is the same configuration and can also be written by
+hand at `<warpi data dir>/standalone/config.json`, or pointed at with
+`WARPI_STANDALONE_CONFIG`. Example with an API key stored in the OS secret
+store under the key `warpi/profile/local`:
 
 ```json
 {
   "enabled": true,
-  "profile": {
-    "id": "local",
-    "display_name": "Local llama.cpp",
-    "base_url": "http://127.0.0.1:8080/v1",
-    "wire": "open_ai_chat_completions",
-    "model_id": "qwen3-coder-30b",
-    "credential": { "secret_store": { "key": "warposs/local" } },
-    "context_limit": 131072,
-    "output_limit": 8192,
-    "compat": { "supports_developer_role": false },
-    "reasoning": false,
-    "supports_image_input": false
-  },
+  "profiles": [
+    {
+      "id": "local",
+      "display_name": "Local llama.cpp",
+      "base_url": "http://127.0.0.1:8080/v1",
+      "wire": "open_ai_chat_completions",
+      "model_id": "qwen3-coder-30b",
+      "credential": { "secret_store": { "key": "warpi/profile/local" } },
+      "context_limit": 131072,
+      "output_limit": 8192,
+      "compat": { "supports_developer_role": false },
+      "reasoning": false,
+      "supports_image_input": false
+    }
+  ],
+  "active_profile": "local",
   "load_context_files": true,
   "max_context_file_bytes": 65536
 }
 ```
 
+The older single-`profile` form is still read (it is folded into `profiles`).
 For an endpoint that requires no authentication:
 
 ```json
@@ -61,15 +69,16 @@ For an endpoint that requires no authentication:
 
 `wire` only accepts `open_ai_chat_completions`. Other protocols are rejected.
 
-Store the secret with the platform tool of your choice (macOS Keychain
+Credentials are written by the settings page. If you prefer the platform tool,
+the key format is `warpi/profile/<profile-id>` (macOS Keychain
 `security add-generic-password`, `secret-tool store` on Linux, Windows
 Credential Manager). The value is read at first use and kept only in memory.
 
 ## Verify
 
 ```bash
-cargo test -p standalone_agent        # 20 tests
-cd standalone/pi-helper && npm test   # 13 tests
+cargo test -p standalone_agent          # 22+ tests
+cd standalone/pi-helper && npm test     # 13 tests
 ```
 
 ## Known limitations

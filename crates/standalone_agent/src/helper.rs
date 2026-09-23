@@ -103,7 +103,7 @@ impl HelperProcess {
         command
             .env("HOME", &config.data_dir)
             .env("TMPDIR", &config.scratch_dir)
-            .env("WARPOS_PI_SCRATCH_DIR", &config.scratch_dir)
+            .env("WARPI_PI_SCRATCH_DIR", &config.scratch_dir)
             .env("PI_OFFLINE", "1")
             .env("NO_COLOR", "1");
         let mut child = command.spawn()?;
@@ -281,11 +281,11 @@ async fn read_stderr(
 /// Locate the bundled helper entry for a Warp build.
 ///
 /// Resolution order (documented in ARCHITECTURE.md):
-/// 1. explicit `WARPOS_PI_HELPER_ENTRY` override (development/testing only);
+/// 1. explicit `WARPI_PI_HELPER_ENTRY` override (development/testing only);
 /// 2. `standalone/pi-helper/dist/main.js` next to the executable;
 /// 3. repository-relative path for `cargo run` development builds.
 pub fn default_helper_entry() -> Option<PathBuf> {
-    if let Ok(override_path) = std::env::var("WARPOS_PI_HELPER_ENTRY")
+    if let Ok(override_path) = std::env::var("WARPI_PI_HELPER_ENTRY")
         && !override_path.trim().is_empty()
     {
         let path = PathBuf::from(override_path);
@@ -323,7 +323,7 @@ console.log(JSON.stringify({ protocol: 1, seq: 0, kind: "env", data: { keys } })
 process.exit(0);"#,
         )
         .expect("write script");
-        unsafe { std::env::set_var("WARPOS_TEST_SECRET", "leak-me") };
+        unsafe { std::env::set_var("WARPI_TEST_SECRET", "leak-me") };
         let config = HelperLaunchConfig {
             executable: PathBuf::from("node"),
             args: vec![script.to_string_lossy().into_owned()],
@@ -348,8 +348,8 @@ process.exit(0);"#,
                 break;
             }
         }
-        unsafe { std::env::remove_var("WARPOS_TEST_SECRET") };
-        assert!(!keys.iter().any(|key| key == "WARPOS_TEST_SECRET"), "keys: {keys:?}");
+        unsafe { std::env::remove_var("WARPI_TEST_SECRET") };
+        assert!(!keys.iter().any(|key| key == "WARPI_TEST_SECRET"), "keys: {keys:?}");
         assert!(keys.contains(&"HOME".to_string()), "HOME must be set to the private dir");
         helper.shutdown().await;
     }

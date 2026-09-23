@@ -741,6 +741,11 @@ pub struct LLMPreferences {
     custom_llms: Vec<LLMInfo>,
     /// All custom model routers, including both local and cloud-backed.
     custom_model_routers: Vec<CustomModelRouter>,
+    /// Synthetic `LLMInfo` for the active standalone (warpi) provider profile, so
+    /// the native model picker and the model chip show the model that is
+    /// actually serving inference. `None` when standalone mode is disabled.
+    #[cfg(not(target_family = "wasm"))]
+    standalone_llm: Option<LLMInfo>,
 }
 
 impl LLMPreferences {
@@ -784,6 +789,8 @@ impl LLMPreferences {
             base_llm_for_terminal_view,
             custom_llms,
             custom_model_routers: Vec::new(),
+            #[cfg(not(target_family = "wasm"))]
+            standalone_llm: None,
         };
 
         // Seed from any already-loaded local config (the async load emits
@@ -791,6 +798,11 @@ impl LLMPreferences {
         if FeatureFlag::CustomModelRouters.is_enabled() {
             me.rebuild_custom_model_routers(ctx);
         }
+
+        // Standalone (warpi) mode contributes its own model entry so the picker
+        // and the active-model chip reflect the local endpoint.
+        #[cfg(not(target_family = "wasm"))]
+        me.rebuild_standalone_llm(ctx);
 
         // In agent mode eval builds, eagerly kick off a fetch of the model list from the server
         // so that it's available by the time test steps like `set_preferred_agent_mode_llm` run.
@@ -800,6 +812,25 @@ impl LLMPreferences {
         me.refresh_available_models(&ResolvedTeamScope::teamless(), ctx);
 
         me
+    }
+
+    /// Rebuild the synthetic `LLMInfo` for the active standalone provider
+    /// profile. Called at startup and by the settings page after it saves.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn rebuild_standalone_llm(&mut self, ctx: &mut ModelContext<Self>) {
+        let previous = self.standalone_llm.take();
+        self.standalone_llm = crate::ai::standalone::current_config()
+            .and_then(|config| config.active().cloned())
+            .map(standalone_llm_info);
+        if self.standalone_llm != previous {
+            ctx.emit(LLMPreferencesEvent::UpdatedAvailableLLMs);
+        }
+    }
+
+    /// The synthetic standalone model, when configured.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn standalone_llm(&self) -> Option<&LLMInfo> {
+        self.standalone_llm.as_ref()
     }
 
     /// Returns the `LLMInfo` for the base LLM to be used for an Agent Mode request.
@@ -835,7 +866,7 @@ impl LLMPreferences {
             .base_model
             .clone()
             .and_then(|id| self.model_info_for_id(&models_by_feature.agent_mode, &id, app))
-            .unwrap_or_else(|| self.fallback_llm_info(&models_by_feature.agent_mode, app))
+            .unwrap_or_else(|| self.standalone_or_fallback_llm(&models_by_feature.agent_mode, app))
     }
 
     /// Returns `LLMInfo` for the currently selected LLM to be used for Agent Mode.
@@ -880,12 +911,53 @@ impl LLMPreferences {
         let models_by_feature =
             UserWorkspaces::as_ref(app).feature_model_choice_for_team_uid(team_uid);
 
+        // warpi: the local endpoint is the only inference backend, so show its
+        // model unless the user explicitly pinned one for this terminal view
+        // (that override is applied by the caller before this fallback).
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(llm) = self.standalone_llm.as_ref() {
+            return llm;
+        }
+
         profile
             .data()
             .base_model
             .clone()
             .and_then(|id| self.model_info_for_id(&models_by_feature.agent_mode, &id, app))
             .unwrap_or_else(|| self.fallback_llm_info(&models_by_feature.agent_mode, app))
+    }
+
+    /// Iterator over the standalone model entry, when standalone mode is on.
+    #[cfg(not(target_family = "wasm"))]
+    fn standalone_choice(&self) -> std::option::Iter<'_, LLMInfo> {
+        self.standalone_llm.iter()
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn standalone_choice(&self) -> std::iter::Empty<&'static LLMInfo> {
+        std::iter::empty()
+    }
+
+    /// Prefer the standalone model for the agent-mode base model when the user
+    /// has no explicit selection; otherwise fall through to normal resolution.
+    #[cfg(not(target_family = "wasm"))]
+    fn standalone_or_fallback_llm<'a>(
+        &'a self,
+        available: &'a AvailableLLMs,
+        app: &'a AppContext,
+    ) -> &'a LLMInfo {
+        self.standalone_llm
+            .as_ref()
+            .unwrap_or_else(|| self.fallback_llm_info(available, app))
+    }
+
+    #[cfg(target_family = "wasm")]
+    fn standalone_or_fallback_llm<'a>(
+        &'a self,
+        available: &'a AvailableLLMs,
+        app: &'a AppContext,
+    ) -> &'a LLMInfo {
+        self.fallback_llm_info(available, app)
     }
 
     /// Disable-aware fallback for when the user has no explicit (usable)
@@ -919,6 +991,7 @@ impl LLMPreferences {
         Self::server_info_for_id_router_gated(available, id)
             .or_else(|| self.custom_llm_info_for_id_if_enabled(id, app))
             .or_else(|| self.custom_router_llm_info_for_id_if_enabled(id))
+            .or_else(|| self.standalone_choice().find(|llm| &llm.id == id))
     }
 
     pub fn get_active_coding_model<'a>(
@@ -995,6 +1068,7 @@ impl LLMPreferences {
             })
             .chain(self.custom_llm_choices(app))
             .chain(self.custom_router_choices())
+            .chain(self.standalone_choice())
     }
 
     #[cfg(any(test, feature = "test-util"))]
@@ -2161,6 +2235,8 @@ impl LLMPreferences {
             base_llm_for_terminal_view: HashMap::new(),
             custom_llms,
             custom_model_routers: Vec::new(),
+            #[cfg(not(target_family = "wasm"))]
+            standalone_llm: None,
         }
     }
 }
@@ -2213,6 +2289,34 @@ fn build_custom_llm_infos(endpoints: &[CustomEndpoint]) -> Vec<LLMInfo> {
                 .map(move |model| custom_llm_info_from(endpoint, model))
         })
         .collect()
+}
+
+/// Stable id for the synthetic standalone model entry. Deliberately not a
+/// config-key UUID: it must never be sent to a provider as a model string.
+pub fn standalone_llm_id(profile_id: &str) -> String {
+    format!("standalone:{profile_id}")
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn standalone_llm_info(profile: standalone_agent::provider::ProviderProfile) -> LLMInfo {
+    LLMInfo {
+        display_name: profile.display_name.clone(),
+        base_model_name: profile.model_id.clone(),
+        id: standalone_llm_id(&profile.id).into(),
+        reasoning_level: None,
+        usage_metadata: LLMUsageMetadata {
+            request_multiplier: 1,
+            credit_multiplier: None,
+        },
+        description: Some(format!("local endpoint · {}", profile.model_id)),
+        disable_reason: None,
+        vision_supported: profile.supports_image_input,
+        spec: None,
+        provider: LLMProvider::Unknown,
+        host_configs: HashMap::new(),
+        discount_percentage: None,
+        context_window: LLMContextWindow::default(),
+    }
 }
 
 fn custom_llm_info_from(endpoint: &CustomEndpoint, model: &CustomEndpointModel) -> LLMInfo {

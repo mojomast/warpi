@@ -109,7 +109,7 @@ pub fn profile(base_url: &str, with_key: bool) -> ProviderProfile {
         wire: WireProtocol::OpenAiChatCompletions,
         model_id: "fixture-model".into(),
         credential: if with_key {
-            CredentialRef::SecretStore { key: "warposs/fixture".into() }
+            CredentialRef::SecretStore { key: "warpi/fixture".into() }
         } else {
             CredentialRef::None
         },
@@ -122,7 +122,21 @@ pub fn profile(base_url: &str, with_key: bool) -> ProviderProfile {
     }
 }
 
-pub async fn spawn_bridge(data_dir: &Path, provider: ProviderProfile, api_key: Option<&str>) -> StandaloneBridge {
+pub async fn spawn_bridge(
+    data_dir: &Path,
+    provider: ProviderProfile,
+    api_key: Option<&str>,
+) -> StandaloneBridge {
+    spawn_bridge_with_task(data_dir, provider, api_key, "conv-1", true).await
+}
+
+pub async fn spawn_bridge_with_task(
+    data_dir: &Path,
+    provider: ProviderProfile,
+    api_key: Option<&str>,
+    task_id: &str,
+    create_task: bool,
+) -> StandaloneBridge {
     let mut launch = HelperLaunchConfig::node(helper_entry(), data_dir);
     launch.shutdown_timeout = Duration::from_secs(3);
     let mut bridge = StandaloneBridge::spawn(BridgeConfig {
@@ -152,6 +166,8 @@ pub async fn spawn_bridge(data_dir: &Path, provider: ProviderProfile, api_key: O
             load_context_files: false,
             max_context_file_bytes: 4096,
             data_dir: data_dir.to_path_buf(),
+            task_id: Some(task_id.to_string()),
+            create_task,
         })
         .await
         .expect("session opens");

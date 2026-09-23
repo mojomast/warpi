@@ -130,9 +130,9 @@ mod tests {
     #[test]
     fn resolves_only_configured_references() {
         let store = InMemorySecretStore::new();
-        store.insert("warposs/p1", "sk-1");
+        store.insert("warpi/p1", "sk-1");
         assert!(resolve_credential(&store, &CredentialRef::None).unwrap().is_none());
-        let key = resolve_credential(&store, &CredentialRef::SecretStore { key: "warposs/p1".into() })
+        let key = resolve_credential(&store, &CredentialRef::SecretStore { key: "warpi/p1".into() })
             .unwrap()
             .unwrap();
         assert_eq!(key.expose_secret(), "sk-1");

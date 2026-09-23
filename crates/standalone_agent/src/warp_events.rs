@@ -445,6 +445,8 @@ pub struct RequestInputs {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RequestInputError {
+    /// Kept for compatibility; standalone mode now generates task ids for new
+    /// conversations instead of failing.
     #[error("request has no task context; standalone mode cannot determine the conversation")]
     MissingTaskContext,
     #[error("request contains an unsupported input kind")]
@@ -452,26 +454,27 @@ pub enum RequestInputError {
 }
 
 /// Extract the standalone-relevant inputs from a Warp multi-agent request.
+///
+/// A brand-new conversation has no server-backed task yet: the client sends an
+/// empty task context and the (real) server generates the task id in its first
+/// `CreateTask` action. Standalone mode behaves the same way, so an empty
+/// `task_id` here means "generate one" rather than an error.
 pub fn extract_request_inputs(request: &api::Request) -> Result<RequestInputs, RequestInputError> {
-    let task_context = request.task_context.as_ref().ok_or(RequestInputError::MissingTaskContext)?;
-    let root_task = task_context
-        .tasks
-        .iter()
-        .find(|task| {
-            task.dependencies
-                .as_ref()
-                .is_none_or(|deps| deps.parent_task_id.is_empty())
-        })
-        .or_else(|| task_context.tasks.last())
-        .ok_or(RequestInputError::MissingTaskContext)?;
-    let mut inputs = RequestInputs {
-        conversation_id: root_task.id.clone(),
-        task_id: root_task.id.clone(),
-        user_query: None,
-        tool_results: Vec::new(),
-        working_dir: None,
-        requested_model: None,
-    };
+    let mut inputs = RequestInputs::default();
+    if let Some(task_context) = request.task_context.as_ref()
+        && let Some(root_task) = task_context
+            .tasks
+            .iter()
+            .find(|task| {
+                task.dependencies
+                    .as_ref()
+                    .is_none_or(|deps| deps.parent_task_id.is_empty())
+            })
+            .or_else(|| task_context.tasks.last())
+    {
+        inputs.conversation_id = root_task.id.clone();
+        inputs.task_id = root_task.id.clone();
+    }
     if let Some(input) = request.input.as_ref() {
         if let Some(context) = input.context.as_ref()
             && let Some(directory) = context.directory.as_ref()

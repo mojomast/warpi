@@ -73,7 +73,7 @@ fn default_mode_is_enabled_only_on_dogfood_channels() {
     for channel in [
         Channel::Stable,
         Channel::Preview,
-        Channel::Oss,
+        Channel::Warpi,
         Channel::Integration,
     ] {
         assert_eq!(

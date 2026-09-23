@@ -21,7 +21,7 @@ function sessionConfig(providerBaseUrl: string, apiKey: string | undefined, sess
     load_context_files: false,
     system_prompt: "You are a fixture agent.",
     provider: {
-      provider_id: "warposs-fixture",
+      provider_id: "warpi-fixture",
       name: "fixture",
       base_url: providerBaseUrl,
       api: "openai-completions",

@@ -958,7 +958,7 @@ fn latest_version_for(channel: Channel, versions: &ChannelVersions) -> Result<St
         Channel::Dev => &versions.dev,
         Channel::Preview => &versions.preview,
         Channel::Stable => &versions.stable,
-        channel @ (Channel::Local | Channel::Oss | Channel::Integration) => {
+        channel @ (Channel::Local | Channel::Warpi | Channel::Integration) => {
             bail!("no TUI release artifacts exist for the {channel} channel")
         }
     };
@@ -970,7 +970,7 @@ fn download_endpoint(channel: Channel) -> &'static str {
     match channel {
         Channel::Preview => "/download/agent-cli-preview/artifact",
         Channel::Stable => "/download/agent-cli/artifact",
-        Channel::Dev | Channel::Local | Channel::Oss | Channel::Integration => {
+        Channel::Dev | Channel::Local | Channel::Warpi | Channel::Integration => {
             "/download/agent-cli-dev/artifact"
         }
     }

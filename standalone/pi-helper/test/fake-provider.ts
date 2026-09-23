@@ -74,6 +74,20 @@ export class FakeProvider {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    // `/models` is optional for the adapter (manual model ids are supported),
+    // so the fixture answers it like an OpenAI-compatible server would.
+    if (request.method === "GET" && (request.url ?? "").split("?")[0].endsWith("/models")) {
+      this.captures.push({ body: { path: request.url ?? "" }, headers: { ...request.headers } });
+      this.onCapture?.();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          object: "list",
+          data: [{ id: "fixture-model", object: "model", owned_by: "fixture" }],
+        }),
+      );
+      return;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(chunk as Buffer);
     const raw = Buffer.concat(chunks).toString("utf8");

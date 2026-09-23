@@ -270,7 +270,7 @@ impl ProviderProfile {
             Some(map)
         };
         Ok(HelperProviderConfig {
-            provider_id: format!("warposs-{}", self.id),
+            provider_id: format!("warpi-{}", self.id),
             name: self.display_name.clone(),
             base_url,
             api: self.wire.helper_api().to_string(),
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn api_key_profiles_require_a_resolved_secret() {
         let mut with_key = profile("https://api.example.com/v1", "m");
-        with_key.credential = CredentialRef::SecretStore { key: "warposs/p1".into() };
+        with_key.credential = CredentialRef::SecretStore { key: "warpi/p1".into() };
         assert!(with_key.helper_config(None).is_err());
         let config = with_key.helper_config(Some("sk-secret")).expect("resolves");
         let serialized = serde_json::to_string(&config).expect("serializes");

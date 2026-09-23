@@ -6,14 +6,14 @@ authors.workspace = true
 publish.workspace = true
 license.workspace = true
 autobins = false
-default-run = "warp-tui-oss"
+default-run = "warpi-tui"
 
 # One binary per channel, mirroring the GUI app's `app/src/bin/*` layout. The
 # OSS bin is the `default-run` so bare `cargo run -p warp_tui` builds without
 # the internal `warp-channel-config` generator; `./script/run-tui` selects the
 # local bin when the generator is available.
 [[bin]]
-name = "warp-tui-oss"
+name = "warpi-tui"
 path = "src/bin/oss.rs"
 
 [[bin]]

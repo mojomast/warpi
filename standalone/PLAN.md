@@ -1,4 +1,4 @@
-# Milestone plan and current status
+# Milestone plan and current status (warpi)
 
 Branch: `standalone-pi-backend` in the fork checkout. Upstream baseline
 `71088ba18d27114ccfb358901c66b54220cf30d0`.
@@ -26,24 +26,26 @@ Branch: `standalone-pi-backend` in the fork checkout. Upstream baseline
   helper, `auth=none` wire assertions, two-session isolation, and a clean
   `cargo check`/`cargo build` of the native GUI binary.
 
-## M2 — Standalone onboarding/settings, credentials, model picker 🚧 partial
+## M2 — Standalone onboarding/settings, credentials, model picker ✅
 
 Done:
 - Local-only config (`<data dir>/standalone/config.json` or
-  `WARPOS_STANDALONE_CONFIG`), validation, and a validated single-profile
-  registry with credential references.
+  `WARPI_STANDALONE_CONFIG`) with a multi-profile registry, active-profile
+  selection, and validation; the legacy single-profile form is still read.
+- Native settings page (Settings → Agents → Local Pi provider) for endpoint,
+  model id, limits, auth mode, credential entry (OS secret store), profile
+  add/delete, and "Test connection".
+- The active profile appears in the native model picker and model chip, and
+  refreshes after a save without a restart.
 - Credential resolution through `SecureStorage` into `SecretString`; `auth=none`
   path proven on the wire.
 - Native control flow wiring: `RequestParams.standalone`,
   `generate_multi_agent_output` branch, `is_any_ai_enabled` exception,
   per-conversation helper sessions, durable conversation → Pi session file map.
 
-Remaining before this milestone can be called complete:
-- In-app settings page for endpoint/profile/credential entry (today the config
-  file must be written by hand).
-- Native model picker entry for standalone profiles (today the request carries
-  the synthetic default model id; the profile's model id is what Pi uses).
-- First-run UX for standalone mode (no account, no cloud onboarding).
+Remaining (nice-to-have):
+- First-run guidance inside the provider page (the page is fully usable today,
+  but a brand-new profile starts with placeholder values).
 
 ## M3 — Core tools, approvals, native UI, durable mapping 🚧 partial
 

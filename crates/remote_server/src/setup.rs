@@ -339,15 +339,15 @@ pub fn parse_uname_output(
 /// - dev:         `~/.warp-dev/remote-server`
 /// - local:       `~/.warp-local/remote-server`
 /// - integration: `~/.warp-dev/remote-server`
-/// - warp-oss:    `~/.warp-oss/remote-server`
+/// - warpi:       `~/.warpi/remote-server`
 pub fn remote_server_dir() -> String {
     let warp_dir = match ChannelState::channel() {
         Channel::Stable => ".warp",
         Channel::Preview => ".warp-preview",
         Channel::Dev | Channel::Integration => ".warp-dev",
         Channel::Local => ".warp-local",
-        Channel::Oss => {
-            // TODO(alokedesai): need to figure out how remote server works with warp-oss
+        Channel::Warpi => {
+            // TODO(alokedesai): need to figure out how remote server works with warpi
             // For now, return what Dev returns.
             ".warp-dev"
         }
@@ -472,7 +472,7 @@ pub fn binary_name() -> &'static str {
 ///
 /// The path-versioning rule is keyed strictly off [`Channel`]:
 ///
-/// - [`Channel::Local`] and [`Channel::Oss`] always use the bare
+/// - [`Channel::Local`] and [`Channel::Warpi`] always use the bare
 ///   `{binary_name}` path. For `Local` this is the slot
 ///   `script/deploy_remote_server` writes to; `Oss` is treated the
 ///   same way because it has no release-pinned CDN artifact and is
@@ -488,7 +488,7 @@ pub fn remote_server_binary() -> String {
     let dir = remote_server_dir();
     let name = binary_name();
     match ChannelState::channel() {
-        Channel::Local | Channel::Oss => format!("{dir}/{name}"),
+        Channel::Local | Channel::Warpi => format!("{dir}/{name}"),
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
             format!("{dir}/{name}-{}", pinned_version())
         }
@@ -517,7 +517,7 @@ pub fn remote_server_removal_command() -> String {
 
 /// Returns the version string used to pin remote-server installs on
 /// channels that take the versioned path (i.e. everything except
-/// [`Channel::Local`] and [`Channel::Oss`]). Prefers the baked-in
+/// [`Channel::Local`] and [`Channel::Warpi`]). Prefers the baked-in
 /// `GIT_RELEASE_TAG` from [`ChannelState::app_version`]; falls back to
 /// `CARGO_PKG_VERSION` so the path / install URL is deterministic even on
 /// dev `cargo run` builds without a release tag. The `CARGO_PKG_VERSION`
@@ -535,7 +535,7 @@ fn pinned_version() -> &'static str {
 /// from a previous client version.
 pub fn remote_server_artifact_version() -> &'static str {
     match ChannelState::channel() {
-        Channel::Local | Channel::Oss => REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED,
+        Channel::Local | Channel::Warpi => REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED,
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
             pinned_version()
         }
@@ -571,13 +571,13 @@ const INSTALL_SCRIPT_TEMPLATE: &str = include_str!("install_remote_server.sh");
 /// the path returned by [`remote_server_binary`] so repeat invocations
 /// are idempotent. The `version_query` / `version_suffix` substitutions
 /// follow the same rule as [`remote_server_binary`]: empty on
-/// [`Channel::Local`] and [`Channel::Oss`] (so the install lands at
+/// [`Channel::Local`] and [`Channel::Warpi`] (so the install lands at
 /// the unversioned path used by `script/deploy_remote_server`); pinned to
 /// `&version={v}` / `-{v}` on every other channel, where `v` falls back
 /// to `CARGO_PKG_VERSION` when no release tag is baked in.
 pub fn install_script(staging_tarball_path: Option<&str>) -> String {
     let (vq, version_suffix) = match ChannelState::channel() {
-        Channel::Local | Channel::Oss => (String::new(), String::new()),
+        Channel::Local | Channel::Warpi => (String::new(), String::new()),
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
             let v = pinned_version();
             (format!("&version={v}"), format!("-{v}"))
@@ -617,8 +617,8 @@ fn download_channel() -> &'static str {
         Channel::Stable => "stable",
         Channel::Preview => "preview",
         Channel::Dev | Channel::Local | Channel::Integration => "dev",
-        Channel::Oss => {
-            // TODO(alokedesai): need to figure out how remote server works with warp-oss
+        Channel::Warpi => {
+            // TODO(alokedesai): need to figure out how remote server works with warpi
             // For now, return what Dev returns.
             "dev"
         }
@@ -629,7 +629,7 @@ fn download_channel() -> &'static str {
 /// `"&version=v0.2026.01.01"` on release channels, empty on Local/Oss).
 fn version_query() -> String {
     match ChannelState::channel() {
-        Channel::Local | Channel::Oss => String::new(),
+        Channel::Local | Channel::Warpi => String::new(),
         Channel::Stable | Channel::Preview | Channel::Dev | Channel::Integration => {
             format!("&version={}", pinned_version())
         }

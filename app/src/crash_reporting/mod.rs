@@ -278,7 +278,7 @@ fn get_environment() -> Cow<'static, str> {
         Channel::Local => "local",
         Channel::Integration => "integration_test",
         Channel::Dev => "dev_release",
-        Channel::Oss => "oss_release",
+        Channel::Warpi => "warpi_release",
     };
 
     if operating_system.is_empty() {

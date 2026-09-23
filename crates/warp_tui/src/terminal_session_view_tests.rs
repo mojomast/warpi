@@ -1181,8 +1181,8 @@ fn tui_cli_shell_command_uses_channel_entry_points() {
         "warp-preview --version"
     );
     assert_eq!(
-        super::tui_cli_shell_command(Channel::Oss, "--version"),
-        "warp-oss --version"
+        super::tui_cli_shell_command(Channel::Warpi, "--version"),
+        "warpi --version"
     );
     assert_eq!(
         super::tui_cli_shell_command(Channel::Integration, "--version"),

@@ -1,3 +1,42 @@
+   Compiling standalone_agent v0.1.0 (/home/mojo/projects/warp2/warp/crates/standalone_agent)
+warning: constant `FIXTURE_STEPS_KEY` is never used
+  --> crates/standalone_agent/tests/support/mod.rs:15:11
+   |
+15 | pub const FIXTURE_STEPS_KEY: &str = "FIXTURE_STEPS";
+   |           ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `spawn_bridge` is never used
+   --> crates/standalone_agent/tests/support/mod.rs:125:14
+    |
+125 | pub async fn spawn_bridge(
+    |              ^^^^^^^^^^^^
+
+warning: function `spawn_bridge_with_task` is never used
+   --> crates/standalone_agent/tests/support/mod.rs:133:14
+    |
+133 | pub async fn spawn_bridge_with_task(
+    |              ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `text_deltas` is never used
+   --> crates/standalone_agent/tests/support/mod.rs:214:8
+    |
+214 | pub fn text_deltas(events: &[BridgeEvent]) -> String {
+    |        ^^^^^^^^^^^
+
+warning: function `usage` is never used
+   --> crates/standalone_agent/tests/support/mod.rs:231:8
+    |
+231 | pub fn usage(events: &[BridgeEvent]) -> Option<AgentUsage> {
+    |        ^^^^^
+
+warning: function `steps` is never used
+   --> crates/standalone_agent/tests/support/mod.rs:242:8
+    |
+242 | pub fn steps(value: serde_json::Value) -> serde_json::Value {
+    |        ^^^^^
+
 warning: variable does not need to be mutable
    --> crates/standalone_agent/tests/vertical_slice.rs:196:9
     |
@@ -24,80 +63,58 @@ warning: variable does not need to be mutable
     |         |
     |         help: remove this `mut`
 
-warning: constant `FIXTURE_STEPS_KEY` is never used
-  --> crates/standalone_agent/tests/support/mod.rs:15:11
-   |
-15 | pub const FIXTURE_STEPS_KEY: &str = "FIXTURE_STEPS";
-   |           ^^^^^^^^^^^^^^^^^
-   |
-   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
-warning: function `steps` is never used
-   --> crates/standalone_agent/tests/support/mod.rs:226:8
+warning: variable does not need to be mutable
+   --> crates/standalone_agent/tests/vertical_slice.rs:351:9
     |
-226 | pub fn steps(value: serde_json::Value) -> serde_json::Value {
-    |        ^^^^^
+351 |     let mut fixture = FixtureProvider::start(&captures, &steps).await;
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
 
-warning: function `spawn_bridge` is never used
-   --> crates/standalone_agent/tests/support/mod.rs:125:14
-    |
-125 | pub async fn spawn_bridge(data_dir: &Path, provider: ProviderProfile, api_key: Option<&str>) -> StandaloneBridge {
-    |              ^^^^^^^^^^^^
-
-warning: function `text_deltas` is never used
-   --> crates/standalone_agent/tests/support/mod.rs:198:8
-    |
-198 | pub fn text_deltas(events: &[BridgeEvent]) -> String {
-    |        ^^^^^^^^^^^
-
-warning: function `usage` is never used
-   --> crates/standalone_agent/tests/support/mod.rs:215:8
-    |
-215 | pub fn usage(events: &[BridgeEvent]) -> Option<AgentUsage> {
-    |        ^^^^^
-
-warning: `standalone_agent` (test "vertical_slice") generated 5 warnings (run `cargo fix --test "vertical_slice" -p standalone_agent` to apply 3 suggestions)
-warning: `standalone_agent` (test "session_isolation") generated 5 warnings (2 duplicates)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.73s
-     Running unittests src/lib.rs (target/debug/deps/standalone_agent-aa33baf1faacf81a)
+warning: `standalone_agent` (test "session_isolation") generated 6 warnings
+warning: `standalone_agent` (test "vertical_slice") generated 6 warnings (2 duplicates) (run `cargo fix --test "vertical_slice" -p standalone_agent` to apply 4 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.32s
+     Running unittests src/lib.rs (target/debug/deps/standalone_agent-8c98c9c9a73f7762)
 
 running 14 tests
 test protocol::tests::parses_a_valid_event_envelope ... ok
 test protocol::tests::rejects_duplicate_tool_call_ids_in_a_batch ... ok
 test protocol::tests::rejects_version_mismatch_and_out_of_order_frames ... ok
 test protocol::tests::unknown_kinds_are_reported_for_forward_compatibility ... ok
+test protocol::tests::rejects_oversized_and_non_object_frames ... ok
 test provider::tests::auth_none_resolves_without_a_key_and_never_carries_one ... ok
 test provider::tests::api_key_profiles_require_a_resolved_secret ... ok
 test provider::tests::normalizes_base_urls_without_duplicating_v1_or_the_endpoint ... ok
-test provider::tests::refuses_config_keys_as_model_ids_and_limits_inversions ... ok
 test provider::tests::partial_compat_objects_deserialize_with_conservative_defaults ... ok
+test provider::tests::refuses_config_keys_as_model_ids_and_limits_inversions ... ok
 test provider::tests::rejects_credentials_in_urls_queries_and_unsupported_protocols ... ok
-test protocol::tests::rejects_oversized_and_non_object_frames ... ok
-test secrets::tests::resolves_only_configured_references ... ok
 test secrets::tests::secrets_are_redacted_in_debug_and_display ... ok
+test secrets::tests::resolves_only_configured_references ... ok
 test helper::tests::helper_environment_does_not_inherit_credentials ... ok
 
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 
-     Running tests/session_isolation.rs (target/debug/deps/session_isolation-6afc2825026b88db)
+     Running tests/session_isolation.rs (target/debug/deps/session_isolation-254f083249258ff8)
 
 running 1 test
 test two_sessions_with_different_profiles_stay_isolated ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.21s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.57s
 
-     Running tests/vertical_slice.rs (target/debug/deps/vertical_slice-50cd4fa783eb843b)
+     Running tests/vertical_slice.rs (target/debug/deps/vertical_slice-dd6358b66aa0a347)
 
-running 7 tests
+running 9 tests
+test cancellation_settles_the_run_and_keeps_the_session_usable ... ok
+test auth_none_never_sends_an_authorization_header ... ok
+test new_conversations_without_a_task_context_are_accepted ... ok
 test foreign_and_duplicate_tool_results_are_rejected_without_corrupting_the_turn ... ok
-test native_prompt_tool_result_second_request_and_final_text ... ok
 test request_extraction_reads_the_native_request_shape ... ok
 test tool_result_rendering_maps_shell_results_for_the_model ... ok
-test auth_none_never_sends_an_authorization_header ... ok
-test cancellation_settles_the_run_and_keeps_the_session_usable ... ok
+test a_server_backed_task_is_not_upgraded_again ... ok
 test provider_failures_surface_as_a_single_terminal_failure ... ok
+test native_prompt_tool_result_second_request_and_final_text ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.44s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.57s
 
    Doc-tests standalone_agent
 

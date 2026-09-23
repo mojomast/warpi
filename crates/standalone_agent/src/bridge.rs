@@ -68,6 +68,15 @@ pub struct SessionSpec {
     pub max_context_file_bytes: u64,
     /// Fork-private data directory (the helper's HOME). Never `~/.pi`.
     pub data_dir: PathBuf,
+    /// Warp task id to advertise in the first `CreateTask` event. The app layer
+    /// generates one for brand-new conversations (the real Warp server does the
+    /// same) and reuses it for every exchange in the conversation.
+    pub task_id: Option<String>,
+    /// Whether this conversation still needs a `CreateTask` upgrade. False when
+    /// the client already has a server-backed task (for example after a restart
+    /// or a previous exchange), in which case sending `CreateTask` again would
+    /// fail with `UnexpectedUpgrade`.
+    pub create_task: bool,
 }
 
 /// Adapter-neutral events for one exchange.
@@ -144,6 +153,7 @@ struct SessionState {
     /// Existing Pi session file to restore, if any.
     #[allow(dead_code)]
     session_file: Option<PathBuf>,
+    create_task: bool,
     create_task_sent: bool,
     turn: Option<TurnState>,
     open_ack: Option<oneshot::Sender<Result<SessionOpened, BridgeError>>>,
@@ -364,7 +374,8 @@ impl Driver {
             SessionState {
                 conversation_id: spec.conversation_id.clone(),
                 generation,
-                task_id: String::new(),
+                task_id: spec.task_id.clone().unwrap_or_default(),
+                create_task: spec.create_task,
                 provider_id: spec.provider.id.clone(),
                 working_dir: spec.working_dir.clone(),
                 session_file: spec.session_file.clone(),
@@ -409,7 +420,7 @@ impl Driver {
             request_id: exchange_id.clone(),
             run_id: turn_id.clone(),
         });
-        if !session.create_task_sent {
+        if session.create_task && !session.create_task_sent {
             let task_id = if session.task_id.is_empty() {
                 conversation_id.to_string()
             } else {

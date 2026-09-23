@@ -1,4 +1,10 @@
-# Reuse, attribution, and source pins
+# Reuse, attribution, and source pins (warpi)
+
+> Rename note: this fork is **warpi**. The channel/app identity is
+> `dev.warpi.warpi`, the binary is `warpi`, its config/data directories are
+> `warpi`/`.warpi`, its URL scheme is `warpi`, and its environment overrides are
+> `WARPI_*`. Stock Warp identities (`warp`, `warp-oss`, `.warp`, `warposs`)
+> are untouched, so the two can coexist on one machine.
 
 This fork is built from pinned sources. Nothing here is merged from an
 unrelated fork wholesale; the items below are the complete set of reused
@@ -22,8 +28,7 @@ multi-agent protobuf to a Pi helper over NDJSON.
 
 - Repo: https://github.com/sasuke39/openwarp
 - Commit: `5045d30a98de5432cedfd256e15e56675696d0b7` (2026-09-22)
-- License of the donor adapter: MIT (see
-  `donors/openwarp-ATTRIBUTION.md` in the working tree of the audit; the donor's
+- License of the donor adapter: MIT (see `standalone/DONOR-ATTRIBUTION.md`; the donor's
   separate `openwarp-client` repository is AGPL-3.0 and was **not** used).
 - Donor files inspected: `integrations/pi-agent/src/{runtime,workspace-tools,
   protocol,main}.ts`, `integrations/pi-agent/test/runtime-smoke.test.ts`,
