@@ -44,7 +44,7 @@ What was **ported** (rewritten in Rust/TypeScript for this fork, not copied):
 | Canonical workspace calls (`workspace.shell`, `workspace.read_file`, ...) | `standalone/pi-helper/src/workspace-tools.ts` | Kept as the stable seam; tool set is the seven v1 tools (`bash`, `bash_output`, `read`, `write`, `edit`, `glob`, `grep`). |
 | First-chunk/append-text client actions with the `agent_output.text` field mask | `crates/standalone_agent/src/warp_events.rs` | Reimplemented in Rust against `warp_multi_agent_api`; shapes match the donor's Go (`sendFirstTextChunk` / `sendAppendText`). |
 | `CreateTask` before output for tasks the client has not upgraded | `crates/standalone_agent/src/warp_events.rs` | Same semantics, with the additional `server_data`/`server_message_data` heuristic. |
-| Pending-tool barrier: synthesize errors for unresolved tools, drop late duplicates | `crates/standalone_agent/src/bridge.rs` | Split across the bridge and the helper; unknown/duplicate results become protocol errors instead of being silently synthesized (see `SECURITY.md`). |
+| Pending-tool barrier: synthesize errors for unresolved tools, drop late duplicates | `crates/standalone_agent/src/bridge.rs` | Reworked for exactly-one-result semantics: pending calls the app does not answer are closed with a synthesized cancelled result in the same `turn.resume`, duplicates are ignored, and a batch with no matching result fails without consuming state (see `SECURITY.md`, `ARCHITECTURE.md`). |
 | Cancellation handshake (`turn.cancel` → `turn.cancelling` → `turn.cancelled`) | both sides | Kept; terminal event emitted once, after the Pi turn actually settles. |
 | Compaction settings derivation | `standalone/pi-helper/src/runtime.ts` | Same formula, unit-tested. |
 | Fake OpenAI-compatible fixture (streamed text, fragmented tool arguments, scripted errors) | `standalone/pi-helper/test/fake-provider.ts` | Rewritten in TypeScript, reused by both helper and Rust tests. |
@@ -60,9 +60,11 @@ bridge consumes `warp_multi_agent_api` directly.
    the Rust bridge (the donor spawned a process per HTTP request).
 2. Tool call ids come from the Pi SDK rather than being generated in the
    broker, so the transcript and the Warp tool card share one id.
-3. Unknown/duplicate/stale tool results are surfaced as protocol errors; the
-   donor synthesized error results and continued. Warp already records action
-   outcomes, and inventing results would hide lost side effects.
+3. Tool-result reconciliation is stricter: duplicates are ignored, foreign/stale
+   results never consume pending state, and a call the app drops is closed with a
+   synthesized cancelled error rather than a fabricated success. The donor
+   synthesized generic error results and continued; Warp already records action
+   outcomes, and inventing a success would hide lost side effects.
 4. Background shell management is partial: `bash_output`
    (`workspace.read_shell_command_output`) polls a command that is already
    running with a bounded wait, and `bash` can start a command without waiting
