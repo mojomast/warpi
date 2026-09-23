@@ -9,11 +9,15 @@
 #   - cargo build -p warp --bin warpi --features gui              (debug, Linux)
 #   - cargo test -p standalone_agent                              (Linux)
 # Everything runner-specific below is UNVERIFIED, especially:
-#   * the entire windows-x86_64 job (Chocolatey protoc/cmake, MSVC build,
+#   * the entire windows-x86_64 job (pinned protoc release + Chocolatey cmake, MSVC build,
 #     PowerShell staging and zip). Its CARGO_BIN_NAME/WARP_APP_NAME and runtime
 #     payload handling follow standalone/WINDOWS.md, which was itself a Linux
 #     cross-compile probe, not a successful Windows build;
-#   * the release profile and apt package set on ubuntu-latest;
+#   * the release profile and apt package set on ubuntu-latest. The first run
+#     failed in the warp-proto-apis build script because `--no-install-recommends`
+#     skipped libprotobuf-dev (protobuf-compiler only Recommends it), so
+#     google/protobuf/descriptor.proto was missing; the job now installs it and
+#     sets PROTOC_INCLUDE explicitly;
 #   * packaging/package-warpi.sh running in CI — its `npm ci --omit=dev
 #     --offline` path relies on a warm npm cache (setup-node's cache); if that
 #     fails the script falls back to copying the full node_modules;
@@ -45,7 +49,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            protobuf-compiler libasound2-dev cmake pkg-config build-essential
+            protobuf-compiler libprotobuf-dev libasound2-dev cmake pkg-config build-essential
 
       - name: Install Rust 1.92.0
         uses: dtolnay/rust-toolchain@stable
@@ -69,6 +73,10 @@ jobs:
           npm test
 
       - name: Build warpi (release)
+        env:
+          # prost-build turns this into `protoc -I <dir>`; libprotobuf-dev
+          # installs the well-known types (google/protobuf/*.proto) here.
+          PROTOC_INCLUDE: /usr/include
         run: cargo build --locked -p warp --bin warpi --features gui --release
 
       - name: Test the Rust adapter
@@ -101,8 +109,17 @@ jobs:
       - name: Install build dependencies (protoc, cmake)
         shell: pwsh
         run: |
-          choco install protoc cmake -y --no-progress
-          protoc --version
+          choco install cmake -y --no-progress
+          # Pin the official protoc release: it ships the well-known types
+          # (include/google/protobuf/*.proto) that the warp-proto-apis build
+          # script needs. Package-manager copies may omit them.
+          $zip = "$env:RUNNER_TEMP\protoc.zip"
+          $dir = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v30.2/protoc-30.2-win64.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          "PROTOC=$dir\bin\protoc.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PROTOC_INCLUDE=$dir\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+          & "$dir\bin\protoc.exe" --version
           cmake --version
 
       - name: Install Rust 1.92.0
