@@ -22,6 +22,9 @@ GUI is **pending** and is not claimed. There is no signed installer or release
 bundle yet. Every claim below traces to a test, a screenshot, or an explicit
 **not verified** / **not run** marker.
 
+Version: **0.1.0**. Release notes are in [`CHANGELOG.md`](CHANGELOG.md); the app
+renders the version in **Settings → About**.
+
 History: this repository imports upstream Warp at
 `71088ba18d27114ccfb358901c66b54220cf30d0` and replays the fork commits from
 branch `standalone-pi-backend` on top. The fork uses its own identity
@@ -369,6 +372,15 @@ equivalent of Warp running the approved command).
 
 ## Roadmap and known gaps
 
+- **Durable queueing and event-log delivery are not in 0.1.0.** The prompt queue
+  is in-memory and lives with the running session, so a restart does not recover
+  queued prompts or undelivered events.
+  `crates/standalone_agent/src/journal.rs` and `event_log.rs` are merged but have
+  no callers yet, and the feature is deferred to 0.1.1. Nothing in 0.1.0 survives
+  a restart beyond the conversation → Pi session mapping.
+- **Cost and pricing display are not in 0.1.0.** No preset prices ship, so the
+  usage footer and context meter show token counts only; estimated USD cost is
+  omitted.
 - **Real-provider validation**: the adapter-level round trip against DeepSeek
   (`deepseek-flash`, `deepseek-v4-pro`) is **PASS** (top table; rerun with
   `WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider`).
@@ -424,8 +436,9 @@ equivalent of Warp running the approved command).
 ### Parked ideas (deferred, from a third-party review)
 
 These are parked, not scheduled. The current focus is finishing and shipping the
-existing tracks — local UI and observability, durable queueing, subagents, and
-release consolidation — and this list is a backlog to revisit afterwards. They
+existing tracks — local UI and observability, subagents, and release
+consolidation; durable queueing and event-log delivery are the next track (0.1.1).
+This list is a backlog to revisit afterwards. They
 come from an internal review of the MIT-licensed
 [Jgracier/ClikCode](https://github.com/Jgracier/ClikCode) — recorded as
 `standalone/research/clikcode-review.md` in the development tree, which is not
