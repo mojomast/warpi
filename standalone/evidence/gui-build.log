@@ -1,0 +1,19 @@
+   Compiling standalone_agent v0.1.0 (/home/mojo/projects/warp2/warp/crates/standalone_agent)
+   Compiling warp v0.1.0 (/home/mojo/projects/warp2/warp/app)
+warning: function `credential_reference_ok` is never used
+   --> app/src/ai/standalone/mod.rs:429:8
+    |
+429 | pub fn credential_reference_ok(profile: &ProviderProfile) -> bool {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `status_for_denied_approval` is never used
+   --> app/src/ai/standalone/mod.rs:437:8
+    |
+437 | pub fn status_for_denied_approval() -> HelperToolResultStatus {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `warp` (lib) generated 2 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4m 10s
+EXIT:0

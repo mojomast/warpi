@@ -1,0 +1,89 @@
+TAP version 13
+# Subtest: parseFrame accepts a well-formed frame and preserves identity
+ok 1 - parseFrame accepts a well-formed frame and preserves identity
+  ---
+  duration_ms: 2.824358
+  type: 'test'
+  ...
+# Subtest: parseFrame rejects protocol mismatches, bad types and oversized ids
+ok 2 - parseFrame rejects protocol mismatches, bad types and oversized ids
+  ---
+  duration_ms: 0.393914
+  type: 'test'
+  ...
+# Subtest: encodeFrame refuses frames beyond the size bound
+ok 3 - encodeFrame refuses frames beyond the size bound
+  ---
+  duration_ms: 35.733323
+  type: 'test'
+  ...
+# Subtest: truncateUtf8 never splits a code point
+ok 4 - truncateUtf8 never splits a code point
+  ---
+  duration_ms: 0.535689
+  type: 'test'
+  ...
+# Subtest: round trip: brokered tool, resume, second request (api key: sk-fixture-key)
+ok 5 - round trip: brokered tool, resume, second request (api key: sk-fixture-key)
+  ---
+  duration_ms: 1886.379367
+  type: 'test'
+  ...
+# Subtest: round trip: brokered tool, resume, second request (api key: none)
+ok 6 - round trip: brokered tool, resume, second request (api key: none)
+  ---
+  duration_ms: 1423.609334
+  type: 'test'
+  ...
+# Subtest: turn.cancel settles the turn and leaves the session usable
+ok 7 - turn.cancel settles the turn and leaves the session usable
+  ---
+  duration_ms: 1320.592559
+  type: 'test'
+  ...
+# Subtest: provider error surfaces as turn.failed without retry storm
+ok 8 - provider error surfaces as turn.failed without retry storm
+  ---
+  duration_ms: 1510.960316
+  type: 'test'
+  ...
+# Subtest: canonical calls map model tools to workspace calls
+ok 9 - canonical calls map model tools to workspace calls
+  ---
+  duration_ms: 1.097457
+  type: 'test'
+  ...
+# Subtest: broker batches calls per owner, then resolves them independently
+ok 10 - broker batches calls per owner, then resolves them independently
+  ---
+  duration_ms: 9.315993
+  type: 'test'
+  ...
+# Subtest: broker rejects duplicate tool call ids and oversized arguments
+ok 11 - broker rejects duplicate tool call ids and oversized arguments
+  ---
+  duration_ms: 5.048565
+  type: 'test'
+  ...
+# Subtest: aborting a signal releases the suspended call
+ok 12 - aborting a signal releases the suspended call
+  ---
+  duration_ms: 0.40173
+  type: 'test'
+  ...
+# Subtest: compaction settings scale with the context window
+ok 13 - compaction settings scale with the context window
+  ---
+  duration_ms: 0.222125
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6493.734415
+EXIT:0

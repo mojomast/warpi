@@ -19,8 +19,9 @@ if (stepsPath === undefined || capturesPath === undefined) {
 }
 
 const steps = JSON.parse(process.env.FIXTURE_STEPS ?? "[]") as ScriptStep[];
+const fixedPort = Number.parseInt(process.env.FIXTURE_PORT ?? "", 10);
 const provider = new FakeProvider(steps);
-await provider.start();
+await provider.start(Number.isFinite(fixedPort) ? fixedPort : 0);
 
 const dump = () => {
   try {

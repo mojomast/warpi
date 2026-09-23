@@ -40,18 +40,37 @@ impl WireProtocol {
 
 /// Explicit per-provider compatibility flags. Each flag is opt-in; the default
 /// is the most conservative behaviour and never assumes a capability.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatCompletionsCompat {
     /// Provider accepts `role: "developer"` instead of `role: "system"`.
+    #[serde(default)]
     pub supports_developer_role: bool,
     /// Provider accepts a `reasoning_effort` parameter.
+    #[serde(default)]
     pub supports_reasoning_effort: bool,
     /// Provider emits usage in the final streamed chunk.
+    #[serde(default)]
     pub supports_usage_in_streaming: bool,
     /// Provider supports tool_choice (only meaningful when true).
+    #[serde(default)]
     pub tool_choice: bool,
     /// Token-limit parameter name: `max_tokens` (default) or `max_completion_tokens`.
+    #[serde(default)]
     pub max_completion_tokens_field: bool,
+}
+
+impl Default for ChatCompletionsCompat {
+    /// Every capability is off unless the user opts in. In particular the
+    /// adapter never assumes that a provider reports usage in the stream.
+    fn default() -> Self {
+        Self {
+            supports_developer_role: false,
+            supports_reasoning_effort: false,
+            supports_usage_in_streaming: false,
+            tool_choice: false,
+            max_completion_tokens_field: false,
+        }
+    }
 }
 
 impl ChatCompletionsCompat {
@@ -345,6 +364,45 @@ mod tests {
         bad.output_limit = 1024;
         bad.credential = CredentialRef::SecretStore { key: "  ".into() };
         assert_eq!(bad.validate(), Err(ProfileError::MissingCredentialKey));
+    }
+
+    #[test]
+    fn partial_compat_objects_deserialize_with_conservative_defaults() {
+        // Hand-written config files routinely omit compat fields; the defaults
+        // must be the conservative ones (no developer role, no reasoning).
+        let profile: ProviderProfile = serde_json::from_str(
+            r#"{
+                "id": "p",
+                "display_name": "P",
+                "base_url": "http://127.0.0.1:8080/v1",
+                "wire": "open_ai_chat_completions",
+                "model_id": "m",
+                "credential": "none",
+                "context_limit": 8192,
+                "output_limit": 1024,
+                "compat": {}
+            }"#,
+        )
+        .expect("partial profile deserializes");
+        assert!(!profile.compat.supports_developer_role);
+        assert!(!profile.compat.supports_reasoning_effort);
+        assert!(!profile.compat.supports_usage_in_streaming);
+        assert!(!profile.compat.tool_choice);
+
+        let minimal: ProviderProfile = serde_json::from_str(
+            r#"{
+                "id": "p",
+                "display_name": "P",
+                "base_url": "http://127.0.0.1:8080/v1",
+                "wire": "open_ai_chat_completions",
+                "model_id": "m",
+                "credential": "none",
+                "context_limit": 8192,
+                "output_limit": 1024
+            }"#,
+        )
+        .expect("profile without compat deserializes");
+        assert!(!minimal.compat.supports_developer_role);
     }
 
     #[test]

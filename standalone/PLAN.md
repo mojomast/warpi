@@ -21,9 +21,10 @@ Branch: `standalone-pi-backend` in the fork checkout. Upstream baseline
 - Bridge state machine with per-conversation sessions, suspended tool batches,
   stale/foreign/duplicate rejection, and cancellation.
 - Warp event translation producing native `ResponseEvent`s.
-- Evidence: 20 Rust tests (13 unit + 7 integration) and 13 helper tests,
+- Evidence: 22 Rust tests (14 unit + 8 integration) and 13 helper tests,
   including the full round trip against a loopback fixture with the real
-  helper, plus `auth=none` wire assertions and `cargo check -p warp` clean.
+  helper, `auth=none` wire assertions, two-session isolation, and a clean
+  `cargo check`/`cargo build` of the native GUI binary.
 
 ## M2 — Standalone onboarding/settings, credentials, model picker 🚧 partial
 
@@ -65,9 +66,8 @@ Done:
 - Cancellation while streaming and while awaiting tools; the helper settles the
   run before accepting the next message (tested).
 - Duplicate/foreign/stale result rejection; unknown outcomes surfaced.
-- Two independent sessions with different profiles/directories are isolated by
-  construction (separate helper sessions, separate `ModelRuntime`, keyed tool
-  ownership); an automated two-session test is not yet written.
+- Two independent sessions with different profiles/directories, isolated by
+  construction and verified by `two_sessions_with_different_profiles_stay_isolated`.
 - Network dependency matrix (`NETWORK_DEPENDENCIES.md`).
 
 Remaining:
@@ -77,11 +77,21 @@ Remaining:
   forced-compaction integration test is missing).
 - Bounded retry exhaustion test at the bridge level.
 - Full egress audit of the GUI process.
+- Idle eviction: a conversation's helper session stays alive until app exit;
+  add an idle timeout/close policy before shipping long-running builds.
 
-## M5 — Package the validated target, evidence 📋 not started
+## M5 — Package the validated target, evidence 🚧 partial
 
-- No installer/packaging for the fork yet; the deliverable is a development
-  build plus the documented build path.
+Done:
+- Runnable development build (`target/debug/warp-oss`) verified to launch and
+  render natively under Xvfb + Mesa lavapipe; evidence committed in
+  `standalone/evidence/`.
+- `standalone/BUILDING.md` documents prerequisites, helper build, and config.
+
+Remaining:
+- Installer/release packaging; no signed bundle for any platform yet.
+- Native GUI agent flow not exercised (input-automation gap); see
+  `VALIDATION.md`.
 - Platform evidence is Linux x86_64 only in this environment.
 
 ## Working agreements
