@@ -79,6 +79,12 @@ Remaining:
 - Full egress audit of the GUI process.
 - Idle eviction: a conversation's helper session stays alive until app exit;
   add an idle timeout/close policy before shipping long-running builds.
+- The per-conversation session lock is held across the helper handshake/IPC for
+  `session.open` and `turn.start`; move to a per-session actor before the UI
+  needs to interleave requests for one conversation.
+- Stopping an already-running command from the agent (as opposed to declining a
+  pending one or cancelling inference) is not wired in v1; the user keeps
+  Warp's own block controls.
 
 ## M5 — Package the validated target, evidence 🚧 partial
 
