@@ -52,14 +52,16 @@ Remaining (nice-to-have):
 Done:
 - Six brokered tools mapped to native actions; exact active tool set asserted at
   session open; built-in Pi tools disabled.
-- Approvals, diffs, and execution reuse Warp's own path unchanged.
+- Approvals, diffs, and execution reuse Warp's own path unchanged: verified
+  natively (prompt → tool card → Run → result → second provider request →
+  final text) with screenshots in `evidence/`.
 - Durable session mapping (`session-map.json`); restart resumes the exact Pi
   session file. Idle restart is exercised manually (see `VALIDATION.md`).
 
 Remaining:
 - MCP via Warp's existing integration (not in v1 by design).
-- Reviewed `write`/`edit` UX polish (diffs render through the native path but
-  have not been exercised in a real GUI session here).
+- Reviewed `write`/`edit` diff UX: wired to `ApplyFileDiffs` and tested at the
+  event level, but not yet driven in a GUI session.
 - Long-running command handoff (`bash_output`/`bash_write`/`bash_cancel`).
 
 ## M4 — Cancellation, retries, crashes, compaction, isolation, egress 🚧 partial
