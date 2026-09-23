@@ -159,7 +159,12 @@ release for a paused standalone turn (see the queueing caveat below).
   model of every configured profile, so the native picker lists all models from
   all profiles. Selecting a standalone model switches the active profile and the
   model id used when a helper session is next opened, and the list refreshes
-  immediately after a save or a toggle, without a restart.
+  immediately after a save or a toggle, without a restart. (The committed picker
+  also lists Warp's own model entries next to the standalone ones; a pending
+  change hides every cloud-only entry — models and settings sections — while
+  standalone mode is enabled. It is uncommitted as of 2026-09-23, so the final
+  picker contents are in flux; the GUI screenshot above shows the committed
+  behavior.)
 - **Open conversations keep their session** (known gap, 2026-09-23):
   `run_exchange` opens the helper session only once per conversation and never
   re-reads the profile while it is open, so a conversation that is already
