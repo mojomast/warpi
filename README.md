@@ -13,10 +13,12 @@ required, and no Warp server sits in the agent path.
 Status: early development, validated as a **Linux x86_64 development build**.
 The multi-profile model picker and per-model enable/disable are verified in the
 native GUI, and the agent adapter is validated end-to-end against a real hosted
-provider (DeepSeek). Driving that provider through the GUI is **pending** and
-is not claimed. There is no signed installer or release bundle yet. Every claim
-below traces to a test, a screenshot, or an explicit **not verified** /
-**not run** marker.
+provider (DeepSeek). Prompt queueing, the seven-tool loop (`bash`, `bash_output`,
+`read`, `write`, `edit`, `glob`, `grep`), and the turn-lifecycle guarantees are
+implemented and covered by automated tests. Driving a hosted provider through the
+GUI is **pending** and is not claimed. There is no signed installer or release
+bundle yet. Every claim below traces to a test, a screenshot, or an explicit
+**not verified** / **not run** marker.
 
 History: this repository imports upstream Warp at
 `71088ba18d27114ccfb358901c66b54220cf30d0` and replays the fork commits from
@@ -31,17 +33,20 @@ environment variables), so stock Warp and warpi can coexist on one machine.
 | Native Warp GUI on Linux x86_64 (development build) | **Verified** | window renders under Xvfb + Mesa lavapipe: `standalone/evidence/gui-native-window.png` |
 | End-to-end agent round trip: prompt → local provider → native tool approval card → Run → command output → result back to Pi → second provider request → final text | **Verified** (deterministic loopback fixture) | `standalone/evidence/gui-tool-approval.png`, `gui-round-trip-complete.png`; fixture request captures |
 | Provider settings page (Settings → Agents → Local Pi provider) and **Test connection** (`GET {base}/models`) | **Verified** | `standalone/evidence/gui-provider-settings.png`, `gui-test-connection.png` |
-| Native model picker: every enabled model of every configured provider appears as `standalone:<profile>\|<model>`; selecting one switches the active profile and the model id requests use | **Verified** (GUI, deterministic fixture plus a configured DeepSeek profile) | `standalone/evidence/gui-model-picker-all-providers.png` |
+| Native model picker: every enabled model of every configured profile appears as `standalone:<profile>\|<model>`; selecting one switches the active profile and the model id that newly opened sessions use (an already-open conversation keeps its session; see the roadmap) | **Verified** (GUI, deterministic fixture plus a configured DeepSeek profile) | `standalone/evidence/gui-model-picker-all-providers.png` |
 | Per-model enable/disable in the settings page, persisted per profile as `disabled_models`: disabled models never appear in the picker, and the model in use cannot be disabled | **Verified** (GUI) | `standalone/evidence/gui-model-toggle.png` |
+| Prompt queueing: a prompt submitted while a turn is running is queued FIFO at both the app and bridge layers instead of failing; `Ctrl+Alt+Shift+Enter` (`Cmd+Alt+Shift+Enter` on macOS) cancels the running turn and sends the head queued prompt now | **Verified** (automated: app input test, bridge queue tests, vertical-slice FIFO ordering); the keybinding and hints are not yet driven in the GUI | `standalone/ARCHITECTURE.md` §Prompt queueing and cancellation |
+| Turn lifecycle: exactly one result per forwarded tool call (dropped results are synthesized in the same resume), untranslatable calls answered in place, cancel deadline with `RunCancelled` settling as `Finished(Done)`, stall and pending-tool deadlines that free the session | **Verified** (automated stub-helper suites: dropped results, untranslatable calls, cancel settlement) | `standalone/ARCHITECTURE.md` §Turn lifecycle guarantees |
+| Long-running commands: a still-running command is returned as an error with partial output and non-interactive guidance; `bash_output` polls it with a 1–120 s bounded wait (default 30 s) and cannot write to or stop the command | **Verified** (automated: Rust event tests, helper broker tests); not yet driven in the GUI | `standalone/PROVIDER_COMPATIBILITY.md` |
 | `auth = none` sends no `Authorization` header and never leaks the helper's internal placeholder | **Verified** (automated) | `auth_none_never_sends_an_authorization_header` in `crates/standalone_agent/tests/vertical_slice.rs` |
-| Rust backend | **25 tests** (`cargo test -p standalone_agent`): 14 unit + 1 session-isolation + 9 vertical slice + 1 opt-in real-provider adapter test that reports `NOT RUN` and passes without credentials | `cargo test -p standalone_agent`; `cargo test -p standalone_agent --test real_provider` |
-| Pi helper | **13 tests passing** | `cd standalone/pi-helper && npm test` |
+| Rust adapter suites: unit (`provider`, `secrets`, `protocol`, `bridge`, `helper`, `warp_events`), session isolation, vertical slice (round trip, `auth = none`, FIFO queueing, cancellation, provider failures), dropped-result, untranslatable-call, and cancel-settlement suites, plus one opt-in real-provider test that reports `NOT RUN` and passes without credentials | 56 test functions at the time of writing; the last recorded full run predates the newest suites, so those are **not re-run** yet | `cargo test -p standalone_agent`; `standalone/VALIDATION.md` for the exact PASS/NOT RUN state |
+| Pi helper | 14 tests in the current source (protocol, runtime smoke, broker); the recorded log covers 13, so the `bash_output`/guardrail tests are **not re-run** yet | `cd standalone/pi-helper && npm test`; `standalone/evidence/helper-tests.log` |
 | Real (hosted) provider — **adapter level**, DeepSeek `deepseek-flash` and `deepseek-v4-pro` | **Verified (PASS)**: prompt → provider tool call → brokered workspace call → resume with the real tool output → second provider request → final answer containing the marker | `WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider` (`crates/standalone_agent/tests/real_provider.rs`) |
 | Real (hosted) provider — **driven through the GUI** | **Pending — not claimed.** The adapter-level pass is in the row above; a full hosted-provider round trip has not been driven through the GUI yet | — |
 | Windows / macOS native build and GUI | **Not verified.** The backend crate passes `cargo check --target x86_64-pc-windows-gnu`, but the GUI cross-build is blocked by native C/asm dependencies (`aws-lc-sys`, SQLite, tree-sitter, …) with no cross C toolchain; a real Windows runner is the path. The GitHub Actions job has not run yet | `standalone/WINDOWS.md`, `.github/workflows/warpi-build.yml`, `standalone/ci/warpi-windows-job.md` |
 | Diff review / file-edit (`write`/`edit`) flow driven in the GUI | **Not yet driven in the GUI** (wired to `ApplyFileDiffs` and tested at the event level) | `standalone/VALIDATION.md` |
 | Conversation restart / idle restore driven in the GUI | **Not yet driven in the GUI** (durable conversation → Pi session mapping exists) | `standalone/VALIDATION.md` |
-| MCP tools, background/long-running command control, subagents | **Not in v1** (deferred by design) | `standalone/PROVIDER_COMPATIBILITY.md` |
+| MCP tools, subagents, `bash_write`/`bash_cancel` (writing to or stopping a running command), file deletion | **Not in v1** (deferred by design) | `standalone/PROVIDER_COMPATIBILITY.md` |
 | Release packaging / signed installer | **Not done** — a development packaging script is included; the upstream `script/` bundlers still target the old `oss` channel | `standalone/VALIDATION.md`, `packaging/package-warpi.sh` |
 
 ## Architecture
@@ -82,8 +87,11 @@ environment variables), so stock Warp and warpi can coexist on one machine.
 
 Ownership is split so neither side duplicates the other:
 
-- **Pi (helper)** owns the model loop, prompt and tools, transcript, compaction,
-  and retries. It never executes a workspace side effect.
+- **Pi (helper)** owns the model loop, prompt and tools, transcript, and
+  compaction. The SDK retry layer is disabled at session open
+  (`retry.enabled: false`), so a provider failure is terminal for the run right
+  now; mapping retryable failures onto a real retry layer is a known gap. The
+  helper never executes a workspace side effect.
 - **`standalone_agent`** owns transport, protocol validation, correlation, and
   turning helper events into the same native `ResponseEvent`s the Warp server
   would send.
@@ -109,7 +117,7 @@ shims come from `standalone/dev-env.sh`; they are not part of the product.
 cd standalone/pi-helper
 npm ci
 npm run build          # tsc -> dist/
-npm test               # 13 tests
+npm test               # 14 tests
 
 # 2. Build and run warpi
 cd ../..
@@ -125,7 +133,11 @@ requests fail with an explicit local error.
 **Settings → Agents → Local Pi provider** and fill in:
 
 - display name, base URL (for example `http://127.0.0.1:8080/v1`), model id,
-  additional model ids (comma-separated), context and output limits;
+  additional model ids (comma-separated), context and output limits. Provider
+  presets prefill common endpoints and suggested models — DeepSeek,
+  Kimi (Moonshot), OpenAI, OpenRouter, Groq, Mistral, xAI, Together, Fireworks,
+  and local Ollama/LM Studio/llama.cpp/vLLM servers — and every field stays
+  editable;
 - authentication: `none`, or an API key that is written to the OS secret store
   (macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service). On
   Linux systems without a Secret Service provider (headless boxes, bare X
@@ -139,9 +151,11 @@ requests fail with an explicit local error.
 Every enabled model of every configured profile appears in the native model
 picker as `standalone:<profile>|<model>` (for example
 `standalone:deepseek|deepseek-v4-pro`). Picking one switches the active profile
-and the model id that requests use, so both the endpoint and the wire model
-really change; running turns keep the endpoint they started on, and the model
-chip follows the selection.
+and the model id that newly opened sessions use, so the endpoint and the wire
+model change for the next conversation that opens a helper session; an
+already-open conversation keeps the endpoint/model it opened with (the model chip
+follows the selection, so it can disagree with the model actually serving that
+conversation — see the roadmap).
 
 The same page lists the active profile's models with an enable/disable toggle.
 Disabled models are persisted per profile as `disabled_models`, never appear in
@@ -225,8 +239,9 @@ free to redistribute under the author's terms, with one hard condition:
 | Fallback | None in either direction. Standalone requests never reach Warp servers, and a failing local endpoint is reported as a local error. |
 | Verified against a real endpoint | **Adapter level: YES** (DeepSeek `deepseek-flash` and `deepseek-v4-pro`, tool-call round trip; see the top table). GUI real-provider validation is **pending** and not claimed. Other providers are unverified; the compatibility tests themselves still use the deterministic loopback fixture. |
 
-Full tables, including the six tools offered to the model and the exact
-reject-vs-approximate rules, are in `standalone/PROVIDER_COMPATIBILITY.md`.
+Full tables, including the seven tools offered to the model, the queueing
+behavior, and the exact reject-vs-approximate rules, are in
+`standalone/PROVIDER_COMPATIBILITY.md` and `standalone/ARCHITECTURE.md`.
 
 ## Security and trust model
 
@@ -234,7 +249,12 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
 
 - **Approvals stay in Warp.** The adapter only emits typed actions. A shell tool
   call is always labelled `NontrivialLocalChange` and never `is_read_only`;
-  model-supplied risk values are not authorization.
+  model-supplied risk values are not authorization. **Known gap:** the adapter
+  currently also emits `is_risky: false`, which lets Warp's `AgentDecides`
+  shortcut auto-execute before the redirection/allowlist gate runs; the intended
+  value is `is_risky: true`, and a fix is in progress (uncommitted at the time of
+  writing). Until it lands, the redirection gate is not enforced for Pi shell
+  calls.
 - **One origin per profile.** TLS is required for public hosts; plain `http` is
   allowed only for loopback/private endpoints the user typed. Certificate
   validation is never disabled globally.
@@ -247,8 +267,12 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
   arguments fail closed.
 - **Protocol bounds.** Newline-delimited JSON frames capped at 4 MiB; protocol
   version, `seq`, session/turn/exchange/generation identity, duplicate tool call
-  ids, and foreign/stale tool results are all validated. Unknown or duplicate
-  results are surfaced as protocol errors, never guessed.
+  ids, and foreign/stale tool results are all validated. A result that matches no
+  pending call fails the exchange without consuming state, duplicates are
+  ignored, and calls the app drops are closed with a synthesized cancelled error
+  so the Pi run never waits on a promise nobody resolves. Per-result content is
+  truncated; a very large multi-result resume frame can still exceed the 4 MiB
+  frame bound (known gap, fix in progress).
 - **Credentials.** Stored in the OS secret store by reference (or, on Linux
   without a Secret Service, in Warp's encrypted `0600` fallback file under the
   state directory); read into an in-memory `SecretString` that redacts itself in
@@ -307,8 +331,8 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
 ## Testing
 
 ```bash
-cargo test -p standalone_agent                  # 25 tests: 14 unit + 1 session isolation + 9 vertical slice + 1 opt-in real-provider test (NOT RUN without a key)
-cd standalone/pi-helper && npm test             # 13 tests
+cargo test -p standalone_agent                  # unit + session-isolation + vertical-slice + stub-helper suites (56 test functions in the current source; see VALIDATION.md for which have been re-run)
+cd standalone/pi-helper && npm test             # 14 tests in the current source (13 in the recorded log)
 cargo check -p warp --bin warpi --features gui  # app compile
 cargo check -p warp --tests --features gui      # app test targets compile
 
@@ -319,16 +343,18 @@ WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider
 The vertical-slice suite runs the real helper against a loopback fixture and
 asserts the number and order of provider requests, the request bodies, the
 absence of an `Authorization` header for `auth = none`, two-session isolation,
-cancellation, and provider-failure classification. The helper suite covers
-protocol validation, tool brokering, compaction settings, and four end-to-end
-provider scenarios. The Rust tests never contact a non-loopback host, except the
-opt-in `real_provider` test, which only runs when `WARPI_REAL_PROVIDER_KEY` is
-set and defaults to DeepSeek's OpenAI-compatible endpoint
-(`WARPI_REAL_PROVIDER_BASE_URL`, `WARPI_REAL_PROVIDER_MODEL` override it). It
-proves the adapter round trip end-to-end: prompt → provider tool call → brokered
-workspace call → resume with the real tool output → second provider request →
-final answer containing a marker that exists only in the test. The tool is
-executed by the test (the equivalent of Warp running the approved command).
+FIFO queueing, cancellation, and provider-failure classification. The
+stub-helper suites cover dropped tool results, untranslatable calls, and cancel
+settlement. The helper suite covers protocol validation, tool brokering,
+compaction settings, `bash_output`, and four end-to-end provider scenarios. The
+Rust tests never contact a non-loopback host, except the opt-in `real_provider`
+test, which only runs when `WARPI_REAL_PROVIDER_KEY` is set and defaults to
+DeepSeek's OpenAI-compatible endpoint (`WARPI_REAL_PROVIDER_BASE_URL`,
+`WARPI_REAL_PROVIDER_MODEL` override it). It proves the adapter round trip
+end-to-end: prompt → provider tool call → brokered workspace call → resume with
+the real tool output → second provider request → final answer containing a
+marker that exists only in the test. The tool is executed by the test (the
+equivalent of Warp running the approved command).
 
 ## Roadmap and known gaps
 
@@ -337,20 +363,34 @@ executed by the test (the equivalent of Warp running the approved command).
   `WARPI_REAL_PROVIDER_KEY=... cargo test -p standalone_agent --test real_provider`).
   The same provider flow driven through the GUI is **pending** and not claimed,
   and no coding-performance claim is made. Other hosted providers are
-  unverified. `standalone/VALIDATION.md` records the adapter-level PASS in its
-  automated-tests section, but its "Not run" table and risk register still carry
-  the earlier "no real provider run" wording; the README table and the test file
-  are the current evidence.
+  unverified; the Kimi (Moonshot) preset only prefills an endpoint and suggested
+  model ids. `standalone/VALIDATION.md` records the adapter-level PASS and the
+  not-run items separately.
 - **Diff review**: `write`/`edit` map to `ApplyFileDiffs` and are unit-tested at
   the event level, but the approval/diff flow has not been driven in the GUI.
 - **Restart**: the conversation → Pi session mapping is durable; restart/idle
   restore has not been exercised end-to-end in the GUI.
-- **Cancellation** is tested in Rust and the helper; not yet driven through the
-  GUI. Stopping an already-running command from the agent is not wired in v1
-  (Warp's own block controls still work).
+- **Cancellation** is tested in Rust and the helper, including a helper that
+  never acknowledges `turn.cancel` (the cancel deadline settles the turn); it has
+  not been driven through the GUI. Stopping an already-running command from the
+  agent is not wired in v1 (Warp's own block controls still work; `bash_output`
+  can only wait).
+- **Queueing caveat**: a prompt submitted while a turn is running is queued FIFO
+  and runs when the turn settles; the send-now keybinding cancels a streaming
+  turn, but it cannot reach a turn that is **paused** on an approval card, so the
+  queued prompt waits for the pending-tool deadline (30 minutes by default;
+  `WARPI_PENDING_TOOL_TIMEOUT_SECS=0` removes the deadline and the automatic
+  release). A fix is in progress but not committed at the time of writing. The
+  send-now keybinding and hints are implemented but not yet driven in the GUI.
+- **Profile/model/key changes** do not apply to a conversation whose helper
+  session is already open (the model chip can show the new selection while
+  inference continues on the old endpoint), and the conversation → Pi session map
+  is written with an unlocked read-modify-write, so concurrent first requests can
+  lose an entry and restart a conversation on a fresh transcript.
 - **MCP** is out of scope for v1 and is not advertised to the model.
-- **Long-running / background commands** (`bash_output`/`bash_write`/
-  `bash_cancel`) are deferred; v1 runs foreground commands.
+- **Long-running commands**: `bash_output` bounded polling is implemented
+  (`workspace.read_shell_command_output`, 1–120 s, default 30 s, cannot write to
+  or stop the command); `bash_write`/`bash_cancel` and file deletion are deferred.
 - **Subagents, images, reasoning display, web search, documents, skills,
   artifacts** are not offered in v1.
 - **Packaging**: no signed installer or release bundle; the release bundlers
@@ -362,10 +402,11 @@ executed by the test (the equivalent of Warp running the approved command).
   path is the GitHub Actions job (`.github/workflows/warpi-build.yml`,
   `standalone/ci/warpi-windows-job.md`), which has not been run. macOS is
   entirely unverified. `standalone/WINDOWS.md` has the full probe log.
-- **Robustness gaps**: crash-injection matrix, forced-compaction integration
-  test, bounded-retry exhaustion, idle eviction of helper sessions, per-session
-  actors for request interleaving, and a full egress audit of the GUI process
-  are all still open (see `standalone/PLAN.md`).
+- **Robustness gaps**: retry handling (the SDK retry layer is disabled at
+  session open, so a transient provider failure is terminal), the crash-injection
+  matrix, a forced-compaction integration test, idle eviction of helper sessions,
+  per-session actors for request interleaving, and a full egress audit of the GUI
+  process are all still open (see `standalone/PLAN.md`).
 
 ## Licensing and attribution
 
