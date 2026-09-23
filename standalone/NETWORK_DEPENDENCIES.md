@@ -21,7 +21,7 @@ request fails at the local auth boundary before any socket is opened.
 | 9 | Crash reporting (Sentry) | `app/src/crash_reporting/mod.rs` | Disabled by channel configuration (`crash_reporting_config: None`). | `is_crash_reporting_available` |
 | 10 | Update checks / downloads | `app/src/autoupdate/*` | Disabled for OSS (`autoupdate_config: None`); no release download URL is set for the fork. | `is_autoupdate_available` / OSS `unreachable!` guards |
 | 11 | Model catalog | `ServerApi::get_feature_model_choices` / `freeAvailableModels` | Not required: the model id is typed by the user; the helper never fetches a catalog (`modelsPath: null`, `allowModelNetwork: false`). | `standalone/pi-helper/src/runtime.ts`; `ModelRuntime.create` options |
-| 12 | MCP servers (user-configured) | `crates/mcp/src/runtime.rs` | Out of scope for v1. MCP is not advertised to the model in standalone mode. | `get_supported_tools` list to be narrowed in M2 (see status) |
+| 12 | MCP servers (user-configured) | `crates/mcp/src/runtime.rs` | Out of scope for v1. MCP servers and tools are not advertised to the model in standalone mode. | `PROVIDER_COMPATIBILITY.md` (deferred list) |
 | 13 | Remote server download (`/download/cli`) | `crates/remote_server/src/setup.rs` | Unreachable: SSH workspaces are unsupported and refused. | `SECURITY.md` |
 | 14 | LSP binary installs (GitHub) | `crates/lsp/src/install.rs` | Only on demand; unrelated to agent inference. | n/a |
 | 15 | Node/npm downloads | `crates/node_runtime` | Not used by the standalone helper; the helper is bundled and launched with the system/runtime `node` chosen at install time. | `standalone/pi-helper` ships `dist/` |

@@ -3,6 +3,12 @@
 Status legend: **PASS** (reproduced here), **FAIL**, **NOT RUN** (no runner or
 not attempted). Every claim names the command or the artifact that produced it.
 
+Status updated 2026-09-23: the tree gained the S1/S2/S4 turn-lifecycle suites
+(`tool_result_loss.rs`, `untranslatable_calls.rs`, `cancel_settlement.rs`), the
+FIFO queueing tests, and the `bash_output` tests after the last recorded full
+run. Counts below are a source inventory at HEAD `d49521c`; the recorded logs
+predate them, so those suites are marked NOT RE-RUN rather than PASS.
+
 ## Source pins
 
 | Item | Revision |
@@ -24,17 +30,23 @@ an `alsa.pc` stub, `RUST_FONTCONFIG_DLOPEN=1`, `CARGO_INCREMENTAL=0` — see
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Rust backend | `cargo test -p standalone_agent` | **PASS** — 24 tests: 14 unit + 1 session-isolation + 9 vertical slice (`evidence/rust-tests.log`) |
-| Pi helper | `cd standalone/pi-helper && npm test` | **PASS** — 13 tests (`evidence/helper-tests.log`) |
-| App compile | `cargo check -p warp --bin warpi --features gui` | **PASS** |
-| App test targets | `cargo check -p warp --tests --features gui` | **PASS** |
+| Rust backend (last recorded full run) | `cargo test -p standalone_agent` | **PASS** — 14 unit + 1 session-isolation + 9 vertical slice (`evidence/rust-tests.log`, recorded before the S1/S2/S4 additions) |
+| Rust backend (current source inventory) | `cargo test -p standalone_agent` | **NOT RE-RUN** — 56 test functions: 14 `bridge`, 11 vertical slice, 9 `warp_events`, 6 `provider`, 5 `protocol`, 3 untranslatable calls, 2 `tool_result_loss`, 2 `secrets`, 1 each `session_isolation`, `cancel_settlement`, `real_provider`, `helper` |
+| Pi helper (last recorded full run) | `cd standalone/pi-helper && npm test` | **PASS** — 13 tests (`evidence/helper-tests.log`) |
+| Pi helper (current source inventory) | `cd standalone/pi-helper && npm test` | **NOT RE-RUN** — 14 tests: 4 protocol, 4 runtime smoke, 6 broker (`bash_output` brokering and the non-interactive guardrail test post-date the log) |
+| App compile | `cargo check -p warp --bin warpi --features gui` | **PASS** at the recorded revision; not re-run here |
+| App test targets | `cargo check -p warp --tests --features gui` | **PASS** at the recorded revision; not re-run here |
 | Native build | `cargo build -p warp --bin warpi --features gui` | **PASS** — 4m16s, 1.0 GB debug binary (`evidence/gui-build.log`) |
 
 Highlights covered by the Rust suites: the M1 round trip against a loopback
 fixture with the real helper; `auth=none` wire assertions; two-session
-isolation; cancellation; provider-failure classification; foreign/duplicate/
-stale tool results; new conversations with no task context; and the
-`CreateTask` gating fix (a server-backed task is never upgraded twice).
+isolation; cancellation, including a helper that never acknowledges `turn.cancel`
+(cancel settlement); FIFO queueing and cancelling a queued prompt without touching
+the running turn; provider-failure classification; foreign/duplicate/stale tool
+results; a dropped result (synthesized in the same `turn.resume`); an
+untranslatable tool call answered in place; new conversations with no task
+context; and the `CreateTask` gating fix (a server-backed task is never upgraded
+twice).
 
 **Real provider (adapter level, PASS)**: `cargo test -p standalone_agent
 --test real_provider` runs the full brokered loop against a live endpoint when
@@ -61,8 +73,9 @@ no Warp server received agent traffic.
 | --- | --- | --- |
 | Native window, onboarding, terminal | **PASS** | `evidence/gui-native-window.png` |
 | Fresh agent conversation starts with the local model selected (`GUI Fixture (local endpoint · fixture-model)` in the model chip) | **PASS** | `evidence/gui-round-trip-complete.png` |
-| Native model selector lists the standalone model as selected and switching applies (auto ⇄ DeepSeek) | **PASS** | `evidence/gui-run/22-model-selector.png`, `23-select-auto.png`, `25-selector-reopen.png`, `26-back-to-deepseek.png` |
-| Prompt → local provider receives the brokered tool schema and returns a `bash` tool call | **PASS** | fixture captures: request 1 = `[system, user]`, tool schema = our six tools |
+| Native model selector lists every enabled model of every profile (`DeepSeek · deepseek-flash`, `DeepSeek · deepseek-v4-pro`, `Local fixture`) and selecting one switches the active profile (terminal output "The picker switched the active profile.") | **PASS** | `evidence/gui-model-picker-all-providers.png` |
+| Per-model enable/disable removes a model from the picker (only `deepseek-flash` offered after disabling the other) | **PASS** | `evidence/gui-model-toggle.png` |
+| Prompt → local provider receives the brokered tool schema and returns a `bash` tool call | **PASS** | fixture captures: request 1 = `[system, user]`, tool schema = our seven tools |
 | **Native tool approval card** ("OK if I run this command and read the output?", Reject/Edit/Run) | **PASS** | `evidence/gui-tool-approval.png` |
 | Click **Run** → the command executes in a normal Warp block | **PASS** | `evidence/gui-round-trip-complete.png` |
 | Result returns to Pi → **second** provider request → final assistant text "Warpi round trip complete." | **PASS** | fixture captures: request 2 = `[system, user, assistant, tool]`; screenshot above |
@@ -87,7 +100,9 @@ regression tests:
 | --- | --- | --- |
 | Diff review / file-edit approvals in the GUI | **NOT RUN** | The `edit`/`write` paths are wired to `ApplyFileDiffs` and unit-tested at the event level; no GUI run yet. |
 | Conversation restart / idle restore in the GUI | **NOT RUN** | Durable Pi session mapping is implemented and exercised by the app code path; not yet driven through a restart in the GUI. |
-| Real (non-fixture) provider | **NOT RUN** | No authorized credentials available. No compatibility or coding-performance claims are made. |
+| Real (hosted) provider driven through the GUI | **NOT RUN** | The adapter-level round trip passes against DeepSeek (see above); no hosted provider has been driven through the GUI. No coding-performance claims are made. |
+| Queueing / send-now (`Ctrl+Alt+Shift+Enter`) in the GUI | **NOT RUN** | FIFO queueing is covered by Rust tests (app `send_queued_prompt_now_action_fires_the_head_row`, bridge queue tests, vertical-slice FIFO ordering); the hint, panel header, and keybinding have not been driven in the GUI. |
+| Long-running command snapshot + `bash_output` in the GUI | **NOT RUN** | Snapshot-to-error rendering and the `bash_output` clamp are unit-tested in Rust and the helper; no GUI run yet. |
 | Windows / macOS native build and GUI | **NOT RUN** | No runners. WSL is not a native Windows test. |
 | Full egress audit of the GUI process | **NOT RUN** | Source-level inventory in `NETWORK_DEPENDENCIES.md`; the GUI run did confirm that agent traffic went to the loopback fixture only. |
 | `warp_core` path tests on a machine without XDG overrides | **NOT RUN** | 5 of the 47 tests assert home-relative defaults and fail under this harness's `XDG_*` overrides; they pass with those unset. |
@@ -116,21 +131,34 @@ final   : "Warpi round trip complete."
 ## Honest risk register
 
 1. **GUI coverage is partial.** Tools, approvals, model chip, provider settings,
-   and the full inference round trip are verified natively. Diff review,
-   restart, and cancellation are not yet driven in the GUI.
-2. **No real provider run.** Provider compatibility flags exist and are tested
-   against the fixture only.
+   and the full inference round trip are verified natively. Diff review, restart,
+   cancellation, queueing/send-now, and `bash_output` are not yet driven in the
+   GUI.
+2. **Real-provider coverage is adapter-level only.** DeepSeek `deepseek-flash`
+   and `deepseek-v4-pro` pass the brokered round trip through
+   `crates/standalone_agent/tests/real_provider.rs`; the same flow has not been
+   driven through the GUI, the Kimi preset is a configuration preset only (not a
+   compatibility claim), and every other provider is unverified. The
+   compatibility tests themselves use the deterministic loopback fixture.
 3. **Unknown-outcome reconciliation is surfaced, not automated.** A crash after
    an effect but before its result leaves an unknown state; no automatic retry.
 4. **Helper process control is single-process.** No POSIX process group or job
    object; the helper spawns no children in v1.
-5. **Packaging is not updated for the rename.** `script/linux/*` and
+5. **Known turn/queue caveat.** Stop / send-now cannot cancel a turn paused on an
+   approval card; the queued prompt waits for the 30-minute pending-tool deadline
+   (or indefinitely with `WARPI_PENDING_TOOL_TIMEOUT_SECS=0`). A fix is in
+   progress in the working tree but not committed (2026-09-23). A profile or
+   model switch also does not apply to a conversation whose helper session is
+   already open, and the session map can lose an entry under concurrent first
+   requests (see `ARCHITECTURE.md`).
+6. **Packaging is not updated for the rename.** `script/linux/*` and
    `script/windows/*` bundlers still contain the old `oss` channel case; the
    development entrypoints (`script/run`, `script/run-tui`) and the CI check
-   job were updated. Release bundling is M5 work.
-6. **Compile warnings remain** (5 in the app crate: an unused standalone
-   helper, a deprecated proto field, and dead-code notes). None affect
-   behaviour.
-7. **macOS identity** was not exercised; the fork's bundle id/URL scheme
+   job were updated. `packaging/package-warpi.sh` is a no-sudo development
+   bundle, not a signed release. Release bundling is M5 work.
+7. **Compile warnings remain** (5 in the app crate at the last check: an unused
+   standalone helper, a deprecated proto field, and dead-code notes). None affect
+   behaviour; not re-checked for the current tree.
+8. **macOS identity** was not exercised; the fork's bundle id/URL scheme
    (`dev.warpi.warpi`, `warpi`) are set in the binary but unverified in a real
    bundle.

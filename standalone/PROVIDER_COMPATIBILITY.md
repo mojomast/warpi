@@ -41,12 +41,13 @@ are never assumed.
 
 ## Tool surface offered to the model
 
-Six brokered tools; every one maps to a typed Warp action executed by the
+Seven brokered tools; every one maps to a typed Warp action executed by the
 native client:
 
 | Model tool | Canonical call | Warp action | Approval |
 | --- | --- | --- | --- |
-| `bash` | `workspace.shell` | `RunShellCommand` (`risk_category = NONTRIVIAL_LOCAL_CHANGE`, never `is_read_only`) | Warp's command approval |
+| `bash` | `workspace.shell` | `RunShellCommand` (`risk_category = NONTRIVIAL_LOCAL_CHANGE`, never `is_read_only`) | Warp's command approval; see the `is_risky` note below |
+| `bash_output` | `workspace.read_shell_command_output` | `ReadShellCommandOutput` with a 1–120 s wait (default 30) | read permissions; it can only wait, never write to or stop the command |
 | `read` | `workspace.read_file` | `ReadFiles` (optional line range) | read permissions |
 | `write` | `workspace.write_file` | `ApplyFileDiffs` → `new_files` (overwrite allowed) | diff review |
 | `edit` | `workspace.edit_file` | `ApplyFileDiffs` → exact-match `FileDiff` | diff review |
@@ -58,9 +59,28 @@ old/new text, `grep` with a `glob` filter, any tool-argument payload over
 512 KiB. A rejected tool call becomes a failed tool result for the model, never
 a partial execution.
 
-Deferred (not offered in v1): file deletion, background/long-running command
-control, MCP tools and resources, subagents, computer use, web search,
-documents, skills, artifacts.
+A `bash` call that is still running when Warp stops waiting is **not** a success:
+the model gets an error result with the partial output, the command id, and the
+non-interactive guidance, and it can call `bash_output` to keep waiting in bounded
+steps. Interactive and forever-running commands are not blocked by the harness; it
+steers the model away from them with the tool descriptions and a system-prompt
+addendum, because it cannot interrupt a command that already blocks the user's
+terminal.
+
+**`is_risky` status (2026-09-23)**: `translate_tool_call` currently emits
+`is_risky: false`, which makes Warp's `AgentDecides` path auto-execute the command
+before the redirection/allowlist gate runs. That is a gap against the intended
+model (Pi cannot classify risk, so it must not claim the not-risky shortcut); the
+intended value is `is_risky: true`, which routes every Pi shell call through the
+same denylist, redirection, allowlist, and read-only checks as a native call the
+model marked risky. A fix is in the working tree but not committed as of
+2026-09-23; until it lands, treat the redirection gate as not enforced for Pi
+shell calls (`SECURITY.md` has the same caveat).
+
+Deferred (not offered in v1): file deletion, writing to or stopping a running
+command (`bash_write`/`bash_cancel`), background command management beyond
+`bash_output` polling, MCP tools and resources, subagents, computer use, web
+search, documents, skills, artifacts.
 
 ## "Test connection" semantics
 
@@ -83,15 +103,20 @@ mode and an 8-second timeout.
 | `provider_error`, `timeout`, LLM unavailable | `LlmUnavailable` |
 | anything else (protocol, internal) | `InternalError` |
 
-Retries are configured once (helper-side `SettingsManager.retry`); the backend
-never multiplies them. A non-retryable error is terminal for the exchange and
-the run.
+Retries are currently **off**: `session.open` sends `retry.enabled: false` and
+`max_retries: 0`, so the backend never multiplies a provider retry and a
+non-retryable error is terminal for the run. The helper's `SettingsManager.retry`
+path exists but is not exercised by the standalone session; mapping
+`RunFailed.retryable` onto a real retry layer is planned, not implemented.
 
 ## Compatibility that is **NOT VERIFIED**
 
-- No real provider has been exercised in this audit environment. All provider
-  tests use the deterministic loopback fixture; treat real-provider behaviour
-  as **NOT RUN**. See `VALIDATION.md`.
+- **Adapter level**: the round trip is verified against a real hosted provider
+  (DeepSeek `deepseek-flash` and `deepseek-v4-pro`) through
+  `crates/standalone_agent/tests/real_provider.rs`. Every other provider, and the
+  same DeepSeek flow driven through the GUI, is **NOT RUN**. The Kimi (Moonshot)
+  preset only prefills an endpoint and suggested model ids; it is not a
+  compatibility claim. See `VALIDATION.md`.
 - Redirect behaviour with credentials, proxy environments, and corporate
   middleboxes that rewrite streaming responses.
 - Non-UTF8 or unusually fragmented SSE frames beyond the fixture's synthetic

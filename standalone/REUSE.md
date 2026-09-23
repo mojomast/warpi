@@ -41,7 +41,7 @@ What was **ported** (rewritten in Rust/TypeScript for this fork, not copied):
 | --- | --- | --- |
 | NDJSON envelope over stdio with per-exchange correlation | `crates/standalone_agent/src/protocol.rs`, `standalone/pi-helper/src/protocol.ts` | Rewritten with a version handshake, strict sequence validation, per-frame identity (session/turn/exchange/generation), bounded frames, and typed events. |
 | Tool brokering: custom tool suspends on a promise; batch is emitted; reply resumes the same prompt | `standalone/pi-helper/src/workspace-tools.ts`, `runtime.ts` | Rewritten; uses the SDK's own `toolCallId` for correlation, adds duplicate/id-length rejection, abort handling, and per-owner batching. |
-| Canonical workspace calls (`workspace.shell`, `workspace.read_file`, ...) | `standalone/pi-helper/src/workspace-tools.ts` | Kept as the stable seam; tool set reduced to six v1 tools. |
+| Canonical workspace calls (`workspace.shell`, `workspace.read_file`, ...) | `standalone/pi-helper/src/workspace-tools.ts` | Kept as the stable seam; tool set is the seven v1 tools (`bash`, `bash_output`, `read`, `write`, `edit`, `glob`, `grep`). |
 | First-chunk/append-text client actions with the `agent_output.text` field mask | `crates/standalone_agent/src/warp_events.rs` | Reimplemented in Rust against `warp_multi_agent_api`; shapes match the donor's Go (`sendFirstTextChunk` / `sendAppendText`). |
 | `CreateTask` before output for tasks the client has not upgraded | `crates/standalone_agent/src/warp_events.rs` | Same semantics, with the additional `server_data`/`server_message_data` heuristic. |
 | Pending-tool barrier: synthesize errors for unresolved tools, drop late duplicates | `crates/standalone_agent/src/bridge.rs` | Split across the bridge and the helper; unknown/duplicate results become protocol errors instead of being silently synthesized (see `SECURITY.md`). |
@@ -63,29 +63,55 @@ bridge consumes `warp_multi_agent_api` directly.
 3. Unknown/duplicate/stale tool results are surfaced as protocol errors; the
    donor synthesized error results and continued. Warp already records action
    outcomes, and inventing results would hide lost side effects.
-4. Background shell management (`bash_output`/`bash_write`/`bash_cancel`) is
-   deferred; v1 only runs foreground commands (with an explicit
-   `run_in_background` reject-path documented in `PROVIDER_COMPATIBILITY.md`).
+4. Background shell management is partial: `bash_output`
+   (`workspace.read_shell_command_output`) polls a command that is already
+   running with a bounded wait, and `bash` can start a command without waiting
+   (`run_in_background`), but `bash_write`/`bash_cancel` are deferred. There is
+   no way for the model to write to or stop a running command.
 5. No WebSocket/HTTP listener anywhere in the helper.
 
 ## Files added by this fork
 
 ```
 crates/standalone_agent/            Rust backend (new crate)
-app/src/ai/standalone/mod.rs        Standalone wiring + local config
-app/Cargo.toml                      + standalone_agent dependency
-app/src/ai/mod.rs                   + module registration
-app/src/ai/agent/api.rs             + RequestParams.standalone
-app/src/ai/agent/api/impl.rs        + local-backend branch
-app/src/settings/ai.rs              + standalone exception for agent mode
 standalone/pi-helper/               Private Node helper embedding the Pi SDK
-standalone/*.md                     These documents
-standalone/dev-env.sh               Local dev environment for this audit machine
+app/src/ai/standalone/mod.rs        Standalone wiring + local config
+app/src/settings_view/local_provider_page.rs  Local Pi provider settings page
+app/src/ai/llms.rs                  Standalone entries in the model picker
+app/src/ai/blocklist/queued_query.rs  Standalone defaults to the prompt queue
+app/src/terminal/input.rs           Send-queued-prompt-now keybinding + hints
+app/src/terminal/view/queued_prompts_panel.rs  Queued-prompt panel header hint
+app/src/bin/warpi.rs                warpi GUI entry point
+standalone/**                       Docs, helper, evidence, dev shims
+packaging/package-warpi.sh          No-sudo development bundle
+.github/workflows/warpi-build.yml   Linux/Windows CI job (not run yet)
 ```
 
-## Upstream files changed (complete list)
+Several entries in this list are edits to upstream files rather than new files;
+the two sections below separate the two.
 
-`app/Cargo.toml`, `app/src/ai/mod.rs`, `app/src/ai/agent/api.rs`,
-`app/src/ai/agent/api/impl.rs`, `app/src/settings/ai.rs`. No upstream file was
-deleted or rewritten; every change is additive and guarded by
-`#[cfg(not(target_family = "wasm"))]` and/or the standalone config check.
+## Upstream files changed (summary; 2026-09-23)
+
+120 files differ from the pinned baseline. The authoritative list is
+`git diff --name-only 71088ba18d27114ccfb358901c66b54220cf30d0..HEAD`; no
+upstream file was deleted. The main groups:
+
+- **Standalone wiring**: `app/src/ai/{mod,llms}.rs`,
+  `app/src/ai/agent/api.rs`, `app/src/ai/agent/api/impl.rs`,
+  `app/src/ai/blocklist/queued_query.rs`, `app/src/ai/standalone/mod.rs`,
+  `app/src/settings/ai.rs`, `app/src/settings_view/*.rs`,
+  `app/src/terminal/{input,input_tests}.rs`,
+  `app/src/terminal/view/queued_prompts_panel.rs`,
+  `app/src/server/telemetry/events.rs`.
+- **Fork identity/channel**: `app/src/bin/warpi.rs`,
+  `crates/warp_core/src/{channel,paths}.rs`, `crates/warp_tui/**`,
+  `app/src/autoupdate/*`, `app/src/crash_reporting/mod.rs`,
+  `crates/http_server/src/lib.rs`.
+- **Secure storage**: `crates/warpui_extras/src/secure_storage/linux_tests.rs`,
+  `crates/warpui_extras/src/secure_storage/windows.rs`.
+- **Packaging/CI/licensing**: `.github/workflows/warpi-build.yml`,
+  `packaging/**`, `LICENSE-NOTES.md`, `Cargo.lock`, `app/Cargo.toml`,
+  `.gitignore`.
+
+Changes are meant to stay guarded by `#[cfg(not(target_family = "wasm"))]`, the
+standalone config check, or the fork channel (`Channel::Warpi`).
