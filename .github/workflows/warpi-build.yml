@@ -10,13 +10,15 @@
 #   - Windows x86_64: checkout, pinned protoc + Chocolatey cmake, the Pi helper
 #     build/tests, and the release warpi.exe build passed. The Rust adapter
 #     tests fail deterministically in tests/session_isolation.rs (same failure
-#     in run 35875945102): the helper's first request to the Node fixture
-#     reports provider_error "Connection error.". The helper's own Node
-#     round-trip test passes on the same runner, so the fault is in the test
-#     harness's cross-process fixture, not in the shipped helper. The test step
-#     runs every suite with --no-fail-fast and tolerates the failure
-#     (continue-on-error) until the fork-side fixture fix lands; because of
-#     that, the Windows staging and upload steps are still UNVERIFIED.
+#     in run 35875945102): the helper's first request to the cross-process Node
+#     fixture reports provider_error "Connection error." while the same suite
+#     passes on Linux and the helper's own tests pass on the same runner. The
+#     fixture (standalone/pi-helper/test/serve-fixture.ts) now probes its
+#     listener before announcing readiness and survives stdout/unhandled stream
+#     errors, but the root cause is not reproducible off Windows, so the fix is
+#     UNVERIFIED and the test step tolerates the failure (continue-on-error)
+#     with --no-fail-fast until a Windows run confirms it. Because of that, the
+#     Windows staging and upload steps are still UNVERIFIED.
 # Local evidence for the commands this workflow mirrors lives in
 # standalone/VALIDATION.md and standalone/evidence/.
 # The first-ever run failed on Linux in the warp-proto-apis build script because
@@ -162,14 +164,14 @@ jobs:
           WARP_APP_NAME: Warpi
         run: cargo build --locked -p warp --bin warpi --features gui --release
 
-      # KNOWN WINDOWS FAILURE (runs 35875945102 and 35879868946): the Node-fixture
-      # integration suites fail here — the helper's first request to the
-      # Rust-spawned fixture reports provider_error "Connection error." — while
-      # the same suites pass on Linux and the Pi helper's own Node round-trip
-      # test passes on this runner. The fault is in the cross-process test
-      # fixture, not the shipped helper. Every suite still runs with
-      # --no-fail-fast and the failure is annotated; drop continue-on-error once
-      # the fork-side fixture fix lands (see the verification header).
+      # KNOWN WINDOWS FAILURE (runs 35875945102 and 35879868946): the Rust
+      # adapter's session_isolation suite fails here — the helper's first
+      # request to the Rust-spawned Node fixture reports provider_error
+      # "Connection error." — while the same suite passes on Linux and the Pi
+      # helper's own tests pass on this runner. The fixture was hardened
+      # (listener readiness probe, stdout/unhandled-error guards); the root
+      # cause is unverified without a Windows runner, so every suite still runs
+      # with --no-fail-fast and the failure is tolerated.
       - name: Test the Rust adapter (known Windows fixture failure tolerated)
         shell: pwsh
         continue-on-error: true
