@@ -47,7 +47,7 @@ native client:
 | Model tool | Canonical call | Warp action | Approval |
 | --- | --- | --- | --- |
 | `bash` | `workspace.shell` | `RunShellCommand` (`risk_category = NONTRIVIAL_LOCAL_CHANGE`, never `is_read_only`) | Warp's command approval; see the `is_risky` note below |
-| `bash_output` | `workspace.read_shell_command_output` | `ReadShellCommandOutput` with a 1–120 s wait (default 30) | read permissions; it can only wait, never write to or stop the command |
+| `bash_output` | `workspace.read_shell_command_output` | `ReadShellCommandOutput` with a 1–120 s wait (default 30) | no approval card (auto-executed read); it can only read, never write to or stop the command |
 | `read` | `workspace.read_file` | `ReadFiles` (optional line range) | read permissions |
 | `write` | `workspace.write_file` | `ApplyFileDiffs` → `new_files` (overwrite allowed) | diff review |
 | `edit` | `workspace.edit_file` | `ApplyFileDiffs` → exact-match `FileDiff` | diff review |
