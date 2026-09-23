@@ -166,7 +166,7 @@ impl LocalProviderPageView {
         });
 
         Self {
-            page: PageType::new_monolith(LocalProviderWidget, Some("Local Pi provider"), false),
+            page: PageType::new_monolith(LocalProviderWidget, Some("Local Pi provider"), true),
             profile_id: profile.id.clone(),
             provider_dropdown,
             display_name_editor,
