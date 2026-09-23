@@ -149,6 +149,82 @@ Remaining:
 - Installer/release packaging; no signed bundle for any platform yet.
 - Platform evidence is Linux x86_64 only in this environment.
 
+## Deferred: ClikCode review follow-ups (2026-09-23)
+
+Identified from a third-party review of the MIT-licensed
+[Jgracier/ClikCode](https://github.com/Jgracier/ClikCode), recorded in
+`standalone/research/clikcode-review.md`. These are **design-level borrows**:
+ideas and structures can be reimplemented freely, but any copied code needs the
+MIT copyright/permission notice recorded in `LICENSE-NOTES.md` (with a
+`DONOR-ATTRIBUTION.md`-style entry) before it lands.
+
+**Deferred** in favour of finishing and shipping the current tracks — UI and
+observability, the durable queue/event log, subagents, and release consolidation;
+revisit these afterwards. Nothing below is implemented; where part of an item
+already exists, the item says so.
+
+1. **Provider-error classification → retry (M).** A provider or transport
+   failure collapses to a terminal failure today: `session.open` sends
+   `retry.enabled: false`, the helper's `turn.failed` carries a `retryable` flag,
+   and the bridge forwards it (`BridgeEvent::RunFailed`) but nothing acts on it —
+   `warp_events` maps the code and drops the flag, and the app reports a generic
+   failure. Classify by status code / declared kind only (401/403 auth, 402/429
+   quota with `retryAfter`, transport timeouts), never by model-authored text,
+   and retry the recoverable class with bounded backoff. Keep the retries bounded
+   and integrated with the stall/cancel watchdog and the exchange lifecycle; do
+   not resurrect the SDK retry wholesale. Areas:
+   `crates/standalone_agent/src/bridge.rs` (classification,
+   `BridgeEvent::RunFailed`), `standalone/pi-helper/src/runtime.ts`
+   (`turn.failed` emission), `crates/standalone_agent/src/protocol.rs` if a
+   classified kind is added to the wire, and
+   `crates/standalone_agent/src/warp_events.rs` (`failure_reason`).
+
+2. **Steering / `steer` delivery mode (M).** Queue-by-default and
+   cancel-and-send exist (`ARCHITECTURE.md` §Prompt queueing and cancellation),
+   but a running turn cannot be steered. Add a steering path that appends a
+   mid-turn prompt before Pi's next model step; the delivery-mode shape is
+   already designed in `standalone/research/event-log-delivery-spec.md`. Areas:
+   `standalone/pi-helper/src/runtime.ts`, `standalone/pi-helper/src/protocol.ts`,
+   `crates/standalone_agent/src/bridge.rs`, `app/src/ai/standalone/mod.rs`.
+   Risk: depends on whether the Pi SDK accepts a user message mid-prompt;
+   interacts with the parked-turn cancel caveat.
+
+3. **Two-stage compaction + authoritative token estimate (M–L).** The bridge now
+   derives compaction settings (`derive_compaction_settings`), forwards
+   compaction events with a context reading, and the usage ledger exists; what is
+   missing is the strategy and the estimator. Reference behavior: elide old tool
+   results to head+tail before any summarization, never split a tool call from
+   its result, and prefer the endpoint-reported input-token count over local
+   `chars/N` estimates. Pi still owns the compactor, so the valuable parts now
+   are the estimator feeding the context meter/ledger and the boundary rule if
+   warpi ever owns a cut. Areas: `standalone/pi-helper/src/runtime.ts`,
+   `crates/standalone_agent/src/usage_ledger.rs`,
+   `crates/standalone_agent/src/warp_events.rs` (`finished()` still emits
+   `token_usage: Vec::new()`).
+
+4. **Per-model context/output defaults (S–M).** A longest-prefix lookup table
+   (model-id prefix → context window, output cap) so preset and custom profiles
+   start with sensible limits. Ship as overridable defaults, never as validation:
+   the data is endpoint-dependent and goes stale. Areas:
+   `crates/standalone_agent/src/provider.rs`,
+   `app/src/settings_view/local_provider_page.rs`.
+
+5. **Permission-policy vocabulary (M, design-level).** Reusable wording and
+   structures for approval decisions: hard denies that survive bypass,
+   symlink-aware path confinement, compound-command analysis (a rule for
+   `git status` must not vouch for `git status && rm -rf x`), and suggesting the
+   narrowest rule that would have allowed a call. Warp keeps the approval
+   authority; treat this as policy/UX input for the approval surface and the
+   bridge's argument validation, to confirm with the app owners first. Areas:
+   Warp's approval policy under `app/src/ai/**`
+   (`blocklist/permissions.rs`, the action-model cancel/reject paths) and the
+   bridge's argument validation.
+
+6. **Node-helper packaging safety (S).** Build-time assertions (every runtime
+   import is a declared dependency; the bundle contains no stray `node_modules`)
+   plus a pack → install → run test for the helper tarball in a temp directory.
+   Areas: `standalone/pi-helper/` build/test scripts, `packaging/`.
+
 ## Working agreements
 
 - One writer per shared interface: protocol frames, tool names, and event

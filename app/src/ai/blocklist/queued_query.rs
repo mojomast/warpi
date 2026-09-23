@@ -727,7 +727,12 @@ impl QueuedQueryModel {
     }
 
     /// Per-conversation auto-queue toggle state, ignoring any long-running-command override:
-    /// the explicit toggle when set, otherwise on when the default submission mode is `Queue`.
+    /// the explicit toggle when set, otherwise on when the default submission mode is `Queue`
+    /// or when standalone mode is active.
+    ///
+    /// Standalone turns are served by the local Pi backend, which cannot be steered or
+    /// interrupted mid-turn: a prompt submitted while one is running can only wait its turn,
+    /// so queueing is the default there rather than the cloud "interrupt" behavior.
     pub(crate) fn is_queue_next_prompt_toggle_enabled(
         &self,
         conversation_id: AIConversationId,
@@ -735,7 +740,10 @@ impl QueuedQueryModel {
         self.queues
             .get(&conversation_id)
             .and_then(|state| state.queue_next_prompt_override)
-            .unwrap_or(self.default_mode == PromptSubmissionMode::Queue)
+            .unwrap_or_else(|| {
+                self.default_mode == PromptSubmissionMode::Queue
+                    || crate::ai::standalone::is_enabled()
+            })
     }
 
     /// Toggles the per-conversation auto-queue state. Computes the effective

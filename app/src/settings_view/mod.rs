@@ -13,13 +13,13 @@ use features_page::{FeaturesPageView, FeaturesSettingsPageEvent};
 use itertools::Itertools as _;
 use keybindings::KeybindingsView;
 use knowledge_page::{KnowledgePageAction, KnowledgePageEvent, KnowledgePageView};
+use local_provider_page::LocalProviderPageView;
 use main_page::{MainPageAction, MainSettingsPageEvent, MainSettingsPageView};
 use mcp_servers_page::MCPServersSettingsPageView;
 use nav::{SettingsNavItem, SettingsUmbrella};
 use pathfinder_geometry::vector::Vector2F;
 use privacy_page::{PrivacyPageView, PrivacyPageViewEvent};
 use referrals_page::{ReferralsPageEvent, ReferralsPageView};
-use local_provider_page::LocalProviderPageView;
 use scripting_page::ScriptingSettingsPageView;
 use settings_file_footer::{SettingsFooterKind, SettingsFooterMouseStates, render_footer};
 use settings_page::{
@@ -101,6 +101,7 @@ pub(crate) mod handoff_environment_creation_modal;
 mod join_teams_modal;
 pub mod keybindings;
 mod knowledge_page;
+mod local_provider_page;
 mod main_page;
 pub mod mcp_servers;
 pub mod mcp_servers_page;
@@ -112,7 +113,6 @@ mod privacy;
 mod privacy_page;
 mod referrals_page;
 mod remove_custom_endpoint_confirmation_dialog;
-mod local_provider_page;
 mod scripting_page;
 mod set_default_model_modal;
 mod settings_file_footer;
@@ -656,6 +656,8 @@ pub mod flags {
     pub const TERMINAL_INPUT_PAGE_KEYS_HANDLED_BY_INPUT: &str =
         "TerminalInputPageKeysHandledByInput";
     pub const HAS_PENDING_PROMPT_SUGGESTION: &str = "HasPendingPromptSuggestion";
+    /// When set, the active conversation has a queued prompt that can be sent now.
+    pub const HAS_QUEUED_PROMPT: &str = "HasQueuedPrompt";
     pub const ACTIVE_AGENT_VIEW: &str = "ActiveAgentView";
     pub const ACTIVE_INLINE_AGENT_VIEW: &str = "ActiveInlineAgentView";
     /// When set, ctrl-enter should be the active binding to enter agent view.
@@ -1478,6 +1480,7 @@ impl SettingsView {
             }
             other => other.unwrap_or_default(),
         };
+        let initial_page = crate::standalone_ui::resolve_settings_section(initial_page);
 
         // Auto-expand the umbrella if the initial page is one of its subpages.
         for item in &mut nav_items {
@@ -2058,6 +2061,11 @@ impl SettingsView {
         allow_steal_focus: bool,
         ctx: &mut ViewContext<Self>,
     ) {
+        // Hidden sections redirect to Appearance rather than rendering blank:
+        // command-palette entries, `warpctl`, and session restore can still ask
+        // for them, and landing on a visible local page is better than stranding
+        // the user on an empty pane.
+        let section = crate::standalone_ui::resolve_settings_section(section);
         // Every nav target owns its backing page. Check it exists.
         if self.settings_page(section).is_none() {
             return;
@@ -2127,6 +2135,9 @@ impl SettingsView {
     }
 
     fn should_render_page(&self, settings_page: &SettingsPage, app: &AppContext) -> bool {
+        if crate::standalone_ui::hides_settings_section(settings_page.section) {
+            return false;
+        }
         match &settings_page.view_handle {
             SettingsPageViewHandle::Main(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Teams(v) => v.as_ref(app).should_render(app),
@@ -2251,6 +2262,9 @@ impl SettingsView {
     /// when rendering sidebar items so arrow-key navigation stays in sync
     /// with what the user can actually see.
     fn section_passes_search_filter(&self, section: SettingsSection) -> bool {
+        if crate::standalone_ui::hides_settings_section(section) {
+            return false;
+        }
         self.settings_pages
             .iter()
             .zip(self.pages_filter.iter())

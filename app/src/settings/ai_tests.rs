@@ -529,6 +529,40 @@ fn usage_display_unit_toml_path() {
 }
 
 #[test]
+fn standalone_usage_settings_default_on_and_round_trip() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+
+        AISettings::handle(&app).read(&app, |settings, _ctx| {
+            assert!(*settings.standalone_response_usage);
+            assert!(*settings.standalone_context_meter);
+        });
+
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            report_if_error!(settings.standalone_response_usage.set_value(false, ctx));
+            report_if_error!(settings.standalone_context_meter.set_value(false, ctx));
+        });
+
+        AISettings::handle(&app).read(&app, |settings, _ctx| {
+            assert!(!*settings.standalone_response_usage);
+            assert!(!*settings.standalone_context_meter);
+        });
+    });
+}
+
+#[test]
+fn standalone_usage_settings_toml_paths_are_stable() {
+    assert_eq!(
+        StandaloneResponseUsage::toml_path(),
+        Some("agents.warp_agent.standalone.response_usage")
+    );
+    assert_eq!(
+        StandaloneContextMeter::toml_path(),
+        Some("agents.warp_agent.standalone.context_meter")
+    );
+}
+
+#[test]
 fn orchestration_is_enabled_when_ai_is_enabled() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);

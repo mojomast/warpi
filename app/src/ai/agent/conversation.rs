@@ -3563,6 +3563,15 @@ impl AIConversation {
             .collect()
     }
 
+    /// The request ids backing an exchange, sorted for determinism. Standalone
+    /// usage facts are keyed by the request id the backend assigned.
+    pub fn request_ids_for_exchange(&self, exchange_id: AIAgentExchangeId) -> Vec<String> {
+        let mut request_ids: Vec<String> =
+            self.exchange_request_ids(exchange_id).into_iter().collect();
+        request_ids.sort();
+        request_ids
+    }
+
     /// Given the provided exchange id, get all exchange ids for the turn containing that exchange
     pub fn turn_exchange_ids(&self, exchange_id: AIAgentExchangeId) -> Vec<AIAgentExchangeId> {
         let mut turn = Vec::new();

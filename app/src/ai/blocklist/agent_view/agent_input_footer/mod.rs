@@ -62,6 +62,7 @@ use crate::ai::blocklist::usage::usage_popover_view::{
 };
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
+use crate::ai::standalone::usage_model;
 use crate::appearance::Appearance;
 use crate::auth::{AuthManager, AuthStateProvider};
 use crate::completer::SessionContext;
@@ -810,6 +811,9 @@ impl AgentInputFooter {
         ctx.subscribe_to_model(&AISettings::handle(ctx), |me, _, event, ctx| {
             if matches!(event, AISettingsChangedEvent::UsageDisplayUnit { .. }) {
                 me.update_usage_button(ctx);
+                ctx.notify()
+            } else if matches!(event, AISettingsChangedEvent::StandaloneContextMeter { .. }) {
+                me.update_context_window_button(ctx);
                 ctx.notify()
             } else if matches!(
                 event,
@@ -1573,6 +1577,16 @@ impl AgentInputFooter {
             return None;
         }
 
+        // A persisted custom toolbar can still contain cloud-only items.
+        if crate::standalone_ui::hidden_ui()
+            && matches!(
+                item,
+                AgentToolbarItemKind::ShareSession | AgentToolbarItemKind::UsageSummary
+            )
+        {
+            return None;
+        }
+
         // Hide ShareSession for shared ambient (cloud) agent sessions —
         // it doesn't make sense to offer remote-control when already
         // viewing a cloud agent's shared session.
@@ -2177,34 +2191,70 @@ impl AgentInputFooter {
     }
 
     fn update_context_window_button(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(conversation) =
+        let Some(conversation) =
             BlocklistAIHistoryModel::as_ref(ctx).active_conversation(self.terminal_view_id)
-        {
-            let usage = conversation.context_window_usage();
-            let icon = icon_for_context_window_usage(usage);
-            let remaining_pct = ((1.0 - usage) * 100.0).round() as i32;
+        else {
+            return;
+        };
 
-            let expiry = conversation.latest_exchange().and_then(|exchange| {
-                let output = exchange.output_status.output()?;
-                output.get().model_info.as_ref()?.prompt_cache_expires_at
-            });
-            let is_cache_expired = FeatureFlag::PromptCacheExpiryWarning.is_enabled()
-                && expiry.is_some_and(|expiry| expiry <= Local::now());
-            let context_remaining_tooltip = format!("{remaining_pct}% context remaining");
-            let tooltip = if is_cache_expired {
-                format!("{context_remaining_tooltip} · prompt cache expired")
-            } else {
-                context_remaining_tooltip
-            };
-
-            self.prompt_cache_expired = is_cache_expired;
-            self.context_window_button.update(ctx, |button, ctx| {
-                button.set_icon(Some(icon), ctx);
-                button.set_tooltip(Some(tooltip), ctx);
-            });
-
-            self.reschedule_prompt_cache_expiry_timer(expiry, ctx);
+        if crate::ai::standalone::is_enabled() {
+            let conversation_id = conversation.id().to_string();
+            self.update_standalone_context_meter(&conversation_id, ctx);
+            return;
         }
+
+        let usage = conversation.context_window_usage();
+        let icon = icon_for_context_window_usage(usage);
+        let remaining_pct = ((1.0 - usage) * 100.0).round() as i32;
+
+        let expiry = conversation.latest_exchange().and_then(|exchange| {
+            let output = exchange.output_status.output()?;
+            output.get().model_info.as_ref()?.prompt_cache_expires_at
+        });
+        let is_cache_expired = FeatureFlag::PromptCacheExpiryWarning.is_enabled()
+            && expiry.is_some_and(|expiry| expiry <= Local::now());
+        let context_remaining_tooltip = format!("{remaining_pct}% context remaining");
+        let tooltip = if is_cache_expired {
+            format!("{context_remaining_tooltip} · prompt cache expired")
+        } else {
+            context_remaining_tooltip
+        };
+
+        self.prompt_cache_expired = is_cache_expired;
+        self.context_window_button.update(ctx, |button, ctx| {
+            button.set_label("", ctx);
+            button.set_icon(Some(icon), ctx);
+            button.set_tooltip(Some(tooltip), ctx);
+        });
+
+        self.reschedule_prompt_cache_expiry_timer(expiry, ctx);
+    }
+
+    /// Standalone conversations have no native usage metadata, so the meter
+    /// reads the live `context.updated` reading instead. An unavailable reading
+    /// shows no percentage rather than a fabricated `0%`.
+    fn update_standalone_context_meter(
+        &mut self,
+        conversation_id: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let reading = usage_model::context_for_conversation(conversation_id);
+        let level = usage_model::context_meter_level(reading.as_ref());
+        let usage = reading
+            .as_ref()
+            .and_then(usage_model::StandaloneContextReading::fraction_used)
+            .unwrap_or_default();
+        let icon = icon_for_context_window_usage(usage);
+        let label = usage_model::context_meter_label(reading.as_ref()).unwrap_or_default();
+        let tooltip = usage_model::context_meter_tooltip(reading.as_ref());
+
+        self.prompt_cache_expired = false;
+        self.context_window_button.update(ctx, |button, ctx| {
+            button.set_label(label, ctx);
+            button.set_icon(Some(icon), ctx);
+            button.set_tooltip(Some(tooltip), ctx);
+            button.set_theme(StandaloneContextMeterTheme { level }, ctx);
+        });
     }
 
     /// Retargets (or closes) an open usage popover when the active
@@ -2302,6 +2352,18 @@ impl AgentInputFooter {
             return None;
         }
 
+        // A persisted custom toolbar can still contain cloud-only items.
+        if crate::standalone_ui::hidden_ui()
+            && matches!(
+                item,
+                AgentToolbarItemKind::UsageSummary
+                    | AgentToolbarItemKind::ShareSession
+                    | AgentToolbarItemKind::HandoffToCloud
+            )
+        {
+            return None;
+        }
+
         if self.handoff_compose_state.as_ref(app).is_active()
             && !item.is_available_during_handoff_compose()
         {
@@ -2342,7 +2404,15 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::FileAttach => Some(ChildView::new(&self.file_button).finish()),
             AgentToolbarItemKind::ContextWindowUsage => {
-                let has_conversation = FeatureFlag::ContextWindowUsageV2.is_enabled()
+                // Standalone mode always has a local meter; the setting hides it
+                // independently of the native V2 flag (which release `warpi`
+                // does not enable).
+                let show_item = if crate::ai::standalone::is_enabled() {
+                    *AISettings::as_ref(app).standalone_context_meter
+                } else {
+                    FeatureFlag::ContextWindowUsageV2.is_enabled()
+                };
+                let has_conversation = show_item
                     && BlocklistAIHistoryModel::as_ref(app)
                         .active_conversation(self.terminal_view_id)
                         .is_some();
@@ -2987,6 +3057,40 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         } else {
             None
         }
+    }
+}
+
+/// Tints the standalone context-meter label and icon amber/red as the window
+/// fills, delegating every other visual to the standard input button theme.
+struct StandaloneContextMeterTheme {
+    level: usage_model::ContextMeterLevel,
+}
+
+impl ActionButtonTheme for StandaloneContextMeterTheme {
+    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
+        AgentInputButtonTheme.background(hovered, appearance)
+    }
+
+    fn text_color(
+        &self,
+        hovered: bool,
+        background: Option<Fill>,
+        appearance: &Appearance,
+    ) -> ColorU {
+        let theme = appearance.theme();
+        match self.level {
+            usage_model::ContextMeterLevel::Warning => theme.ansi_fg_yellow(),
+            usage_model::ContextMeterLevel::Critical => theme.ansi_fg_red(),
+            _ => AgentInputButtonTheme.text_color(hovered, background, appearance),
+        }
+    }
+
+    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
+        AgentInputButtonTheme.border(appearance)
+    }
+
+    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
+        true
     }
 }
 

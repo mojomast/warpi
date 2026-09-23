@@ -587,7 +587,10 @@ impl MessageProvider<AgentMessageArgs<'_>> for ZeroStateMessageProducer {
 
         let mut items = Vec::new();
 
-        let show_resume = !active_conversation.is_entirely_passive()
+        // The resume request is server-driven and can never succeed for the
+        // local standalone backend.
+        let show_resume = !crate::standalone_ui::hidden_ui()
+            && !active_conversation.is_entirely_passive()
             && (active_conversation.status().is_cancelled()
                 || active_conversation.status().is_error());
         if show_resume {

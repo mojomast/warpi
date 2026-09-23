@@ -43,6 +43,7 @@ dashmap.workspace = true
 derive_more.workspace = true
 futures.workspace = true
 futures-util.workspace = true
+image.workspace = true
 instant.workspace = true
 itertools.workspace = true
 lazy_static.workspace = true

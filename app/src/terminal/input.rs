@@ -516,6 +516,27 @@ pub const SET_INPUT_MODE_UNLOCKED_TERMINAL_ACTION_NAME: &str = "input:set_mode_u
 
 const START_NEW_CONVERSATION_KEYBINDING_NAME: &str = "input:start_new_agent_conversation";
 
+/// Cancels the running standalone turn and sends the head queued prompt now.
+///
+/// The obvious combinations are taken: `ctrl-enter` (editor `CtrlEnter`),
+/// `alt-enter` (editor `AltEnter`), and `ctrl-shift-enter` (the
+/// submit-to-local-agent / `CmdEnter` binding on Linux and Windows).
+/// `ctrl-alt-shift-enter` / `cmd-alt-shift-enter` is not bound by any other
+/// Warp action.
+const SEND_QUEUED_PROMPT_NOW_MAC_KEYSTROKE: &str = "cmd-alt-shift-enter";
+const SEND_QUEUED_PROMPT_NOW_LINUX_WINDOWS_KEYSTROKE: &str = "ctrl-alt-shift-enter";
+
+/// The key combination that sends the queued prompt now, for the binding and
+/// the queued-prompt hint.
+pub(crate) fn send_queued_prompt_now_keystroke() -> Keystroke {
+    let source = if OperatingSystem::get().is_mac() {
+        SEND_QUEUED_PROMPT_NOW_MAC_KEYSTROKE
+    } else {
+        SEND_QUEUED_PROMPT_NOW_LINUX_WINDOWS_KEYSTROKE
+    };
+    Keystroke::parse(source).expect("send-queued-prompt-now keystroke is valid")
+}
+
 /// The position ID used to identify the start of the replacement span for completions.
 const COMPLETIONS_START_OF_REPLACEMENT_SPAN_POSITION_ID: &str =
     "start_of_completions_replacement_span";
@@ -1263,6 +1284,9 @@ pub enum InputAction {
 
     /// Activates `&` cloud handoff compose mode from the message bar hint.
     ActivateCloudHandoff,
+
+    /// Cancels the running standalone turn and sends the head queued prompt immediately.
+    SendQueuedPromptNow,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -2335,6 +2359,18 @@ pub fn init(app: &mut AppContext) {
         .with_context_predicate(id!("Input") & id!("AIContextMenuOpen") & !id!("IMEOpen"))
         .with_mac_key_binding("cmd-shift-backspace")
         .with_linux_or_windows_key_binding("ctrl-shift-backspace"),
+        // Standalone turns cannot be steered, so a queued prompt is sent now by
+        // cancelling the running turn and submitting it immediately.
+        EditableBinding::new(
+            "input:send_queued_prompt_now",
+            "Send queued prompt now (cancels the running turn)",
+            InputAction::SendQueuedPromptNow,
+        )
+        .with_enabled(|| crate::ai::standalone::is_enabled())
+        .with_group(bindings::BindingGroup::WarpAi.as_str())
+        .with_context_predicate(id!("Input") & id!(flags::HAS_QUEUED_PROMPT) & !id!("IMEOpen"))
+        .with_mac_key_binding(SEND_QUEUED_PROMPT_NOW_MAC_KEYSTROKE)
+        .with_linux_or_windows_key_binding(SEND_QUEUED_PROMPT_NOW_LINUX_WINDOWS_KEYSTROKE),
     ]);
 
     let slash_command_bindings = COMMAND_REGISTRY
@@ -4313,6 +4349,40 @@ impl Input {
                 self.focus_input_box(ctx);
             }
         }
+    }
+
+    /// Sends the head queued prompt now via the standalone "send now" keybinding:
+    /// the running turn is cancelled as part of the submit path
+    /// (`submit_queued_prompt` -> `cancel_conversation_progress`) and the queued
+    /// prompt starts immediately. The binding itself is enabled only in
+    /// standalone mode.
+    fn send_queued_prompt_now(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(conversation_id) =
+            BlocklistAIHistoryModel::as_ref(ctx).active_conversation_id(self.terminal_view_id)
+        else {
+            return;
+        };
+        if QueuedQueryModel::as_ref(ctx).is_dispatch_blocked(conversation_id) {
+            return;
+        }
+        // The head is always the row to fire (FIFO); a locked or unprepared head
+        // blocks the shortcut rather than letting a later row jump ahead.
+        let Some((query_id, text, is_command)) = QueuedQueryModel::as_ref(ctx)
+            .queue(conversation_id)
+            .first()
+            .filter(|row| !row.is_locked() && row.is_ready())
+            .map(|row| (row.id(), row.text().to_owned(), row.is_command()))
+        else {
+            return;
+        };
+        self.send_queued_row_immediately(
+            conversation_id,
+            query_id,
+            text,
+            is_command,
+            QueuedPromptSendNowTrigger::Keybinding,
+            ctx,
+        );
     }
 
     /// Dispatches a queued row immediately: commands execute in the terminal, prompts submit to
@@ -6920,6 +6990,18 @@ impl Input {
                 {
                     Some(status) if status.is_in_progress() => {
                         if is_queue_next_prompt_enabled {
+                            // Standalone turns cannot be steered, so when a prompt is already
+                            // queued surface how to cancel the running turn and send it now.
+                            if crate::ai::standalone::is_enabled()
+                                && selected_conversation_id.is_some_and(|conversation_id| {
+                                    QueuedQueryModel::as_ref(app).has_queue(conversation_id)
+                                })
+                            {
+                                return format!(
+                                    "Queued - press {} to cancel the running turn and send now",
+                                    send_queued_prompt_now_keystroke().displayed()
+                                );
+                            }
                             if is_udi_enabled {
                                 AGENT_MODE_AI_ENABLED_QUEUE_HINT_TEXT_UDI.to_owned()
                             } else {
@@ -16867,6 +16949,7 @@ impl TypedActionView for Input {
             InputAction::ActivateCloudHandoff => {
                 self.activate_cloud_handoff_compose(HandoffEntryPoint::Ampersand, ctx);
             }
+            InputAction::SendQueuedPromptNow => self.send_queued_prompt_now(ctx),
         }
     }
 }
@@ -16951,6 +17034,17 @@ impl View for Input {
 
         if self.buffer_text(app).is_empty() {
             ctx.set.insert(flags::EMPTY_INPUT_BUFFER);
+        }
+
+        if FeatureFlag::QueueSlashCommand.is_enabled()
+            && crate::ai::standalone::is_enabled()
+            && BlocklistAIHistoryModel::as_ref(app)
+                .active_conversation_id(self.terminal_view_id)
+                .is_some_and(|conversation_id| {
+                    QueuedQueryModel::as_ref(app).has_queue(conversation_id)
+                })
+        {
+            ctx.set.insert(flags::HAS_QUEUED_PROMPT);
         }
 
         if ai_settings.is_any_ai_enabled(app) {

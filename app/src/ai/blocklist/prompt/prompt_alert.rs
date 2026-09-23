@@ -255,6 +255,12 @@ impl PromptAlertView {
     }
 
     pub fn determine_state<S: TeamScope + ?Sized>(scope: &S, app: &AppContext) -> PromptAlertState {
+        // The standalone backend is not metered or brokered by Warp, so none of
+        // the plan, credit, or connection alerts below apply.
+        if crate::standalone_ui::hidden_ui() {
+            return PromptAlertState::NoAlert;
+        }
+
         // First, if the user is offline, no AI features will work.
         if !NetworkStatus::as_ref(app).is_online() {
             return PromptAlertState::NoConnection;

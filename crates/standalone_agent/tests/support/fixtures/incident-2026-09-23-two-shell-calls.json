@@ -1,0 +1,16 @@
+{
+  "note": "Sanitized extract of the 2026-09-23 wedge incident (session 15-25-59, entries 19-21). The assistant message requested two bash calls in one turn; the first was answered with a long-running snapshot, the second was cancelled by Warp's snapshot cascade and its result was dropped by request conversion. Commands, ids, and paths here are synthetic: no transcript content, hostnames, or home paths are reproduced.",
+  "calls": [
+    {
+      "tool_call_id": "call_a",
+      "name": "workspace.shell",
+      "arguments": { "command": "echo first" }
+    },
+    {
+      "tool_call_id": "call_b",
+      "name": "workspace.shell",
+      "arguments": { "command": "echo second" }
+    }
+  ],
+  "completion": "both done"
+}

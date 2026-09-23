@@ -299,7 +299,7 @@ while (( "$#" )); do
       OPEN_AFTER_BUNDLE=true
       shift
       ;;
-    # Specify the release channel (local, dev, preview, stable, oss)
+    # Specify the release channel (local, dev, preview, stable, oss, warpi)
     -c|--channel)
       if [ -n "$2" ] && [ "${2:0:1}" != "-" ]; then
         RELEASE_CHANNEL=$2
@@ -434,6 +434,14 @@ elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     WARP_SCHEME_NAME="warposs"
     # The OSS channel does not ship Sentry, so drop the cocoa_sentry feature
     # (which would otherwise pull in the Sentry framework dependency).
+    FEATURES="release_bundle,extern_plist"
+elif [[ $RELEASE_CHANNEL = "warpi" ]]; then
+    WARP_BIN="warpi"
+    BUNDLE_ID="dev.warpi.warpi"
+    WARP_APP_NAME="warpi"
+    WARP_SCHEME_NAME="warpi"
+    # warpi registers no crash-reporting configuration, so drop cocoa_sentry
+    # like the oss channel (which would otherwise pull in Sentry).
     FEATURES="release_bundle,extern_plist"
 fi
 
@@ -723,6 +731,9 @@ if [[ "$ARTIFACT" == "app" ]]; then
     CLI_SCRIPT_PATH="$BUNDLED_RESOURCES_DIR/bin/oz"
   elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     CLI_SCRIPT_PATH="$BUNDLED_RESOURCES_DIR/bin/warp-oss"
+  elif [[ $RELEASE_CHANNEL = "warpi" ]]; then
+    # Must match `Channel::cli_command_name` ("warpi"), not "oz-$channel".
+    CLI_SCRIPT_PATH="$BUNDLED_RESOURCES_DIR/bin/warpi"
   else
     CLI_SCRIPT_PATH="$BUNDLED_RESOURCES_DIR/bin/oz-$RELEASE_CHANNEL"
   fi

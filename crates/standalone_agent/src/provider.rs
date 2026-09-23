@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::HelperProviderConfig;
+use crate::usage_ledger::ModelPricing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -128,6 +129,11 @@ pub struct ProviderProfile {
     /// Extra non-secret headers (never Authorization; use the credential ref).
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    /// USD per 1M tokens by model id. The ledger prices a `assistant.usage`
+    /// fact against this table; a missing row means "cost unknown" rather than
+    /// free, and this table is never sent to the helper.
+    #[serde(default)]
+    pub pricing: BTreeMap<String, ModelPricing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -140,7 +146,9 @@ pub enum ProfileError {
     UnsupportedProtocol(String),
     #[error("model id must be a non-empty provider model string (not a local config key)")]
     MissingModelId,
-    #[error("model id {0:?} looks like a local config key or UUID; enter the provider's exact model string")]
+    #[error(
+        "model id {0:?} looks like a local config key or UUID; enter the provider's exact model string"
+    )]
     ModelIdLooksLikeConfigKey(String),
     #[error("base URL is invalid: {0}")]
     InvalidUrl(String),
@@ -156,6 +164,22 @@ pub enum ProfileError {
     ForbiddenHeader(String),
     #[error("credential reference key must not be empty")]
     MissingCredentialKey,
+    #[error("pricing for model {0:?} must be a finite rate between 0 and 10000 USD per 1M tokens")]
+    InvalidPricing(String),
+}
+
+/// Upper bound accepted for one per-million-token rate; anything above is a
+/// mis-scaled or placeholder value, not a real price.
+const MAX_PRICING_RATE_USD: f64 = 10_000.0;
+
+/// Rates are USD per 1M tokens and must be finite, within range, and
+/// non-negative; an invalid row is rejected rather than silently ignored.
+fn pricing_row_ok(pricing: &ModelPricing) -> bool {
+    let ok = |rate: f64| rate.is_finite() && (0.0..=MAX_PRICING_RATE_USD).contains(&rate);
+    ok(pricing.input)
+        && ok(pricing.output)
+        && pricing.cache_read.is_none_or(ok)
+        && pricing.cache_write.is_none_or(ok)
 }
 
 /// Is this value shaped like an internal configuration key rather than a model
@@ -189,7 +213,9 @@ impl ProviderProfile {
             return Err(ProfileError::MissingModelId);
         }
         if looks_like_uuid(self.model_id.trim()) {
-            return Err(ProfileError::ModelIdLooksLikeConfigKey(self.model_id.clone()));
+            return Err(ProfileError::ModelIdLooksLikeConfigKey(
+                self.model_id.clone(),
+            ));
         }
         if self.context_limit == 0 || self.output_limit == 0 {
             return Err(ProfileError::InvalidLimits);
@@ -206,6 +232,11 @@ impl ProviderProfile {
             let lower = header.to_ascii_lowercase();
             if lower == "authorization" || lower == "api-key" || lower == "proxy-authorization" {
                 return Err(ProfileError::ForbiddenHeader(header.clone()));
+            }
+        }
+        for (model, pricing) in &self.pricing {
+            if model.trim().is_empty() || !pricing_row_ok(pricing) {
+                return Err(ProfileError::InvalidPricing(model.clone()));
             }
         }
         self.normalized_base_url().map(|_| ())
@@ -254,7 +285,9 @@ impl ProviderProfile {
         url::Url::parse(self.base_url.trim())
             .ok()
             .and_then(|url| url.host_str().map(str::to_string))
-            .is_some_and(|host| host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]")
+            .is_some_and(|host| {
+                host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
+            })
     }
 
     /// Build the helper's provider description with a resolved credential.
@@ -264,7 +297,9 @@ impl ProviderProfile {
     pub fn enabled_models(&self) -> Vec<String> {
         self.selectable_models()
             .into_iter()
-            .filter(|model| model == &self.model_id || !self.disabled_models.iter().any(|d| d == model))
+            .filter(|model| {
+                model == &self.model_id || !self.disabled_models.iter().any(|d| d == model)
+            })
             .collect()
     }
 
@@ -281,13 +316,18 @@ impl ProviderProfile {
         models
     }
 
-    pub fn helper_config(&self, api_key: Option<&str>) -> Result<HelperProviderConfig, ProfileError> {
+    pub fn helper_config(
+        &self,
+        api_key: Option<&str>,
+    ) -> Result<HelperProviderConfig, ProfileError> {
         self.validate()?;
         let base_url = self.normalized_base_url()?;
         let auth = match (&self.credential, api_key) {
             (CredentialRef::None, _) => crate::protocol::HelperProviderAuth::None,
             (CredentialRef::SecretStore { .. }, Some(key)) => {
-                crate::protocol::HelperProviderAuth::ApiKey { api_key: key.to_string() }
+                crate::protocol::HelperProviderAuth::ApiKey {
+                    api_key: key.to_string(),
+                }
             }
             (CredentialRef::SecretStore { .. }, None) => {
                 return Err(ProfileError::MissingCredentialKey);
@@ -340,6 +380,7 @@ mod tests {
             reasoning: false,
             supports_image_input: false,
             headers: BTreeMap::new(),
+            pricing: BTreeMap::new(),
         }
     }
 
@@ -350,14 +391,25 @@ mod tests {
             ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
             ("http://127.0.0.1:8080/v1", "http://127.0.0.1:8080/v1"),
             ("http://127.0.0.1:8080/v1/", "http://127.0.0.1:8080/v1"),
-            ("http://127.0.0.1:8080/v1/chat/completions", "http://127.0.0.1:8080/v1"),
-            ("https://api.example.com/v1/chat/completions", "https://api.example.com/v1"),
+            (
+                "http://127.0.0.1:8080/v1/chat/completions",
+                "http://127.0.0.1:8080/v1",
+            ),
+            (
+                "https://api.example.com/v1/chat/completions",
+                "https://api.example.com/v1",
+            ),
         ];
         for (input, expected) in cases {
-            let actual = profile(input, "gpt-x").normalized_base_url().expect("valid");
+            let actual = profile(input, "gpt-x")
+                .normalized_base_url()
+                .expect("valid");
             assert_eq!(actual, expected, "input {input}");
             // The client appends /chat/completions exactly once.
-            assert_eq!(format!("{actual}/chat/completions"), format!("{expected}/chat/completions"));
+            assert_eq!(
+                format!("{actual}/chat/completions"),
+                format!("{expected}/chat/completions")
+            );
             assert!(!actual.ends_with("/chat/completions"));
         }
     }
@@ -445,7 +497,10 @@ mod tests {
         let config = profile("http://127.0.0.1:8080/v1", "m")
             .helper_config(None)
             .expect("auth none needs no key");
-        assert!(matches!(config.auth, crate::protocol::HelperProviderAuth::None));
+        assert!(matches!(
+            config.auth,
+            crate::protocol::HelperProviderAuth::None
+        ));
         let serialized = serde_json::to_string(&config).expect("serializes");
         assert!(!serialized.to_ascii_lowercase().contains("authorization"));
     }
@@ -453,11 +508,78 @@ mod tests {
     #[test]
     fn api_key_profiles_require_a_resolved_secret() {
         let mut with_key = profile("https://api.example.com/v1", "m");
-        with_key.credential = CredentialRef::SecretStore { key: "warpi/p1".into() };
+        with_key.credential = CredentialRef::SecretStore {
+            key: "warpi/p1".into(),
+        };
         assert!(with_key.helper_config(None).is_err());
         let config = with_key.helper_config(Some("sk-secret")).expect("resolves");
         let serialized = serde_json::to_string(&config).expect("serializes");
         assert!(serialized.contains("sk-secret"));
-        assert!(!format!("{config:?}").contains("sk-secret"), "Debug must not leak the key");
+        assert!(
+            !format!("{config:?}").contains("sk-secret"),
+            "Debug must not leak the key"
+        );
+    }
+
+    #[test]
+    fn pricing_defaults_to_empty_and_validates_rows() {
+        let minimal: ProviderProfile = serde_json::from_str(
+            r#"{
+                "id": "p",
+                "display_name": "P",
+                "base_url": "http://127.0.0.1:8080/v1",
+                "wire": "open_ai_chat_completions",
+                "model_id": "m",
+                "credential": "none",
+                "context_limit": 8192,
+                "output_limit": 1024
+            }"#,
+        )
+        .expect("profile without pricing deserializes");
+        assert!(minimal.pricing.is_empty());
+        assert!(minimal.validate().is_ok());
+
+        let mut priced = profile("http://127.0.0.1:8080/v1", "m");
+        priced.pricing.insert(
+            "m".into(),
+            ModelPricing {
+                input: 0.28,
+                output: 0.42,
+                cache_read: Some(0.028),
+                cache_write: None,
+            },
+        );
+        assert!(priced.validate().is_ok());
+        let serialized = serde_json::to_string(&priced).expect("serializes");
+        assert!(serialized.contains("\"pricing\""));
+        assert!(serialized.contains("\"cache_read\":0.028"));
+
+        for bad in [
+            ModelPricing {
+                input: f64::INFINITY,
+                output: 1.0,
+                cache_read: None,
+                cache_write: None,
+            },
+            ModelPricing {
+                input: 1.0,
+                output: -0.5,
+                cache_read: None,
+                cache_write: None,
+            },
+            ModelPricing {
+                input: 10_001.0,
+                output: 1.0,
+                cache_read: None,
+                cache_write: None,
+            },
+        ] {
+            let mut invalid = priced.clone();
+            invalid.pricing.insert("m".into(), bad);
+            assert!(
+                matches!(invalid.validate(), Err(ProfileError::InvalidPricing(_))),
+                "an invalid row must fail validation"
+            );
+        }
     }
 }

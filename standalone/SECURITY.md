@@ -8,14 +8,11 @@ sandbox, and nothing here claims otherwise.
 1. **Warp UI/user → adapter.** The user approves actions; the model cannot.
    A model-provided `is_read_only`/`is_risky`/`risk_category` value is never
    treated as authorization: the adapter always labels shell tool calls
-   `NontrivialLocalChange` and never sets `is_read_only`. **Current gap
-   (2026-09-23):** the adapter emits `is_risky: false`, and that value
-   short-circuits Warp's `AgentDecides` path to `Allowed(AgentDecided)` before
-   the redirection/allowlist gate runs. The intended value is `is_risky: true`
-   (Pi cannot classify risk, so it must not claim the not-risky shortcut), which
-   routes every Pi shell call through the denylist, redirection, allowlist, and
-   read-only checks. A fix is in the working tree but not committed; until it
-   lands, the redirection gate is not enforced for Pi shell calls.
+   `NontrivialLocalChange`, never sets `is_read_only`, and emits `is_risky: true`
+   (`251da37`) so Pi cannot claim the `is_risky == Some(false)` shortcut that
+   would let `AgentDecides` auto-execute before Warp's gates. Every Pi shell call
+   goes through the same denylist, redirection, allowlist, and read-only checks
+   as a native call the model marked risky.
 2. **Adapter → provider endpoint.** One configured origin per profile. TLS is
    required by the URL rules for public hosts (http is allowed only for
    loopback/private endpoints the user typed explicitly); certificate
@@ -77,26 +74,35 @@ Rejected, with a typed error, before any state changes:
 - empty `turn.awaiting_tools` batches;
 - unknown tool names and unsupported arguments (fail closed);
 - tool argument payloads over 512 KiB, tool result content over 4 MiB, event
-  text over 1 MiB (truncated with an explicit marker). Per-result truncation is
-  enforced; the aggregate `turn.resume` frame for a batch of large results can
-  still exceed the 4 MiB frame bound and fail to send (a batch of maximal reads
-  is the trigger). A fix that bounds the whole batch and truncates with a marker
-  is in the working tree but not committed as of 2026-09-23.
+  text over 1 MiB (truncated with an explicit marker). The aggregate
+  `turn.resume` frame is bounded too (`bda8df4`): when a batch of results would
+  exceed the frame cap, each result keeps a truncated, explicitly marked copy, so
+  every pending call is still answered in one frame.
+- a malformed helper frame fails only the affected session: its exchange is
+  settled and its turn cancelled, and other sessions keep running (`251da37`).
+  The scoping path has no dedicated malformed-frame test yet.
 
 ## Approval, execution, and side effects
 
 - Approvals are Warp's own: the adapter only emits typed actions. Unknown or
   invalid actions never reach the executor.
-- Allow / reject / cancel / error stay distinct at the executor, but the
-  distinction is not yet delivered to the model for user rejections
-  (2026-09-23): clicking Reject cancels the pending action locally
-  (`ManuallyCancelled`), and the bridge currently synthesizes a generic error
-  result that even suggests running the command again. A `status: rejected`
-  result is produced only for a **denylisted** command (the
-  `PermissionDenied` path); the glue that would record a UI rejection and
-  answer it with `Rejected` is in the working tree but not committed. Until it
-  lands, treat the model-visible rejection status as unreliable. Rejecting never
-  deadlocks the run: the user's next message supersedes it.
+- Allow / reject / cancel / error stay distinct, and a rejected shell call
+  returns a definite result to the model. Standalone requests convert a
+  `CancelledBeforeExecution` action into `CommandFinished{exit_code: -1, output:
+  "cancelled by Warp"}` (`9cd8443`), so the Pi run resumes with an error instead
+  of the old synthetic "run the command again" text. The bridge additionally
+  keeps a deny registry that answers a still-pending denied call with
+  `status: rejected` (`251da37`; `tests/user_rejection.rs`), which the helper
+  treats as "the user rejected this". Remaining caveats: in the app-driven flow
+  the converted error result is what the bridge forwards, so the typed `Rejected`
+  status is **not guaranteed end-to-end** (the registry path applies when the app
+  does not supply a result for that call); delivery is not pushed — a lone
+  rejection waits for the next request (the next prompt); and the
+  denial-vs-follow-up ordering is untested. The **diff-review** Reject path
+  (`CodeDiffViewEvent::Rejected`) is not wired to the deny registry, so a
+  rejected `write`/`edit` still reaches the model as a cancelled error. Rejecting
+  never deadlocks the session: the pending-tool deadline (or stop / send-now)
+  settles the parked turn.
 - One owner of side effects: Pi's built-in `read`/`bash`/`write`/`edit` tools
   are disabled (`noTools: "all"` + an explicit allowlist); only the seven
   brokered custom tools are active (`bash`, `bash_output`, `read`, `write`,

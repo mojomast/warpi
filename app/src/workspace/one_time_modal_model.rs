@@ -646,8 +646,9 @@ impl OneTimeModalModel {
     }
 
     fn check_and_trigger_oz_launch_modal(&mut self, ctx: &mut ModelContext<Self>) -> bool {
-        // Only show if the feature flag is enabled.
-        if !FeatureFlag::OzLaunchModal.is_enabled() {
+        // Only show if the feature flag is enabled. The modal advertises cloud
+        // agents, which the standalone backend does not provide.
+        if !FeatureFlag::OzLaunchModal.is_enabled() || crate::standalone_ui::hidden_ui() {
             return false;
         }
 
@@ -706,7 +707,8 @@ impl OneTimeModalModel {
         &mut self,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
-        if !FeatureFlag::OrchestrationLaunchModal.is_enabled() {
+        if !FeatureFlag::OrchestrationLaunchModal.is_enabled() || crate::standalone_ui::hidden_ui()
+        {
             return false;
         }
 
@@ -873,6 +875,7 @@ fn maybe_ensure_handoff_chip_in_toolbar(ctx: &mut ModelContext<OneTimeModalModel
     if !FeatureFlag::OzHandoff.is_enabled()
         || !FeatureFlag::HandoffLocalCloud.is_enabled()
         || !cfg!(all(feature = "local_fs", not(target_family = "wasm")))
+        || crate::standalone_ui::hidden_ui()
     {
         return;
     }

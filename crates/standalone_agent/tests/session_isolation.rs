@@ -55,17 +55,19 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
     .await;
 
     let data_dir = root.path().join("data");
-    let mut bridge: StandaloneBridge = StandaloneBridge::spawn(standalone_agent::bridge::BridgeConfig {
-        launch: HelperLaunchConfig::node(helper_entry(), &data_dir),
-        retry: standalone_agent::bridge::RetryOptions {
-            enabled: false,
-            max_retries: 0,
-            base_delay_ms: 0,
-        },
-        compaction_enabled: true,
-    })
-    .await
-    .expect("bridge spawns");
+    let mut bridge: StandaloneBridge =
+        StandaloneBridge::spawn(standalone_agent::bridge::BridgeConfig {
+            launch: HelperLaunchConfig::node(helper_entry(), &data_dir),
+            retry: standalone_agent::bridge::RetryOptions {
+                enabled: false,
+                max_retries: 0,
+                base_delay_ms: 0,
+            },
+            compaction_enabled: true,
+            timeouts: standalone_agent::bridge::BridgeTimeouts::default(),
+        })
+        .await
+        .expect("bridge spawns");
     bridge.hello().await.expect("handshake");
 
     let mut first_profile = profile(&first_fixture.base_url, true);
@@ -91,6 +93,7 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
                 data_dir: data_dir.clone(),
                 task_id: Some(conversation.to_string()),
                 create_task: true,
+                subagents: None,
             })
             .await
             .expect("session opens");
@@ -99,38 +102,82 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
     let mut first_stream = bridge
         .start_turn("conv-first", "first query".to_string())
         .await
-        .expect("first turn");
+        .expect("first turn")
+        .stream;
     let mut second_stream = bridge
         .start_turn("conv-second", "second query".to_string())
         .await
-        .expect("second turn");
+        .expect("second turn")
+        .stream;
 
-    let first_paused = collect_until(&mut first_stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
-    let second_paused = collect_until(&mut second_stream, TIMEOUT, |event| matches!(event, BridgeEvent::ExchangePaused { .. })).await;
+    let first_paused = collect_until(&mut first_stream, TIMEOUT, |event| {
+        matches!(event, BridgeEvent::ExchangePaused { .. })
+    })
+    .await;
+    let second_paused = collect_until(&mut second_stream, TIMEOUT, |event| {
+        matches!(event, BridgeEvent::ExchangePaused { .. })
+    })
+    .await;
     assert_eq!(tool_calls(&first_paused)[0].tool_call_id, "first-call");
     assert_eq!(tool_calls(&second_paused)[0].tool_call_id, "second-call");
 
     // A result belonging to the second conversation must not resume the first.
     let mut foreign = bridge
-        .resume_turn("conv-first", vec![tool_call("second-call", HelperToolResultStatus::Success, "x")])
+        .resume_turn(
+            "conv-first",
+            vec![tool_call(
+                "second-call",
+                HelperToolResultStatus::Success,
+                "x",
+            )],
+        )
         .await
-        .expect("resume call accepted");
-    let rejected = collect_until(&mut foreign, TIMEOUT, |event| matches!(event, BridgeEvent::ProtocolError { .. })).await;
-    assert!(matches!(rejected.last(), Some(BridgeEvent::ProtocolError { .. })));
+        .expect("resume call accepted")
+        .stream;
+    let rejected = collect_until(&mut foreign, TIMEOUT, |event| {
+        matches!(event, BridgeEvent::ProtocolError { .. })
+    })
+    .await;
+    assert!(matches!(
+        rejected.last(),
+        Some(BridgeEvent::ProtocolError { .. })
+    ));
 
     // The genuine result resumes the first turn without touching the second.
     let mut first_resumed = bridge
-        .resume_turn("conv-first", vec![tool_call("first-call", HelperToolResultStatus::Success, "first output")])
+        .resume_turn(
+            "conv-first",
+            vec![tool_call(
+                "first-call",
+                HelperToolResultStatus::Success,
+                "first output",
+            )],
+        )
         .await
-        .expect("resume accepted");
-    let first_settled = collect_until(&mut first_resumed, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+        .expect("resume accepted")
+        .stream;
+    let first_settled = collect_until(&mut first_resumed, TIMEOUT, |event| {
+        matches!(event, BridgeEvent::RunSettled { .. })
+    })
+    .await;
     assert_eq!(final_text(&first_settled).as_deref(), Some("first done"));
 
     let mut second_resumed = bridge
-        .resume_turn("conv-second", vec![tool_call("second-call", HelperToolResultStatus::Success, "second output")])
+        .resume_turn(
+            "conv-second",
+            vec![tool_call(
+                "second-call",
+                HelperToolResultStatus::Success,
+                "second output",
+            )],
+        )
         .await
-        .expect("resume accepted");
-    let second_settled = collect_until(&mut second_resumed, TIMEOUT, |event| matches!(event, BridgeEvent::RunSettled { .. })).await;
+        .expect("resume accepted")
+        .stream;
+    let second_settled = collect_until(&mut second_resumed, TIMEOUT, |event| {
+        matches!(event, BridgeEvent::RunSettled { .. })
+    })
+    .await;
     assert_eq!(final_text(&second_settled).as_deref(), Some("second done"));
 
     // Each conversation used exactly its own endpoint.
@@ -141,8 +188,14 @@ async fn two_sessions_with_different_profiles_stay_isolated() {
     assert_eq!(first_captures[0]["body"]["model"], "fixture-model");
     assert_eq!(second_captures[0]["body"]["model"], "second-model");
     // Credentials are per profile/session and never cross endpoints.
-    assert_eq!(first_captures[0]["headers"]["authorization"], "Bearer sk-isolation");
-    assert_eq!(second_captures[0]["headers"]["authorization"], "Bearer sk-isolation");
+    assert_eq!(
+        first_captures[0]["headers"]["authorization"],
+        "Bearer sk-isolation"
+    );
+    assert_eq!(
+        second_captures[0]["headers"]["authorization"],
+        "Bearer sk-isolation"
+    );
 
     bridge.shutdown().await;
 }

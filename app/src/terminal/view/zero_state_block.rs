@@ -179,25 +179,27 @@ impl View for TerminalViewZeroStateBlock {
                     .finish(),
             );
 
-        let mut items = vec![
-            render_standard_message(
-                Message::new(vec![MessageItem::clickable(
-                    vec![
-                        MessageItem::keystroke(ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()),
-                        MessageItem::text("start a new agent conversation"),
-                    ],
-                    |ctx| {
-                        ctx.dispatch_typed_action(TerminalAction::StartNewAgentConversation {
-                            origin: AgentViewEntryOrigin::Input {
-                                was_prompt_autodetected: false,
-                            },
-                        });
-                    },
-                    self.state_handles.start_new_conversation.clone(),
-                )]),
-                app,
-            ),
-            render_standard_message(
+        let mut items = vec![render_standard_message(
+            Message::new(vec![MessageItem::clickable(
+                vec![
+                    MessageItem::keystroke(ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()),
+                    MessageItem::text("start a new agent conversation"),
+                ],
+                |ctx| {
+                    ctx.dispatch_typed_action(TerminalAction::StartNewAgentConversation {
+                        origin: AgentViewEntryOrigin::Input {
+                            was_prompt_autodetected: false,
+                        },
+                    });
+                },
+                self.state_handles.start_new_conversation.clone(),
+            )]),
+            app,
+        )];
+
+        // Cloud agents do not exist without the Warp backend.
+        if !crate::standalone_ui::hidden_ui() {
+            items.push(render_standard_message(
                 Message::new(vec![MessageItem::clickable(
                     vec![
                         MessageItem::keystroke(
@@ -211,24 +213,25 @@ impl View for TerminalViewZeroStateBlock {
                     self.state_handles.start_cloud_conversation.clone(),
                 )]),
                 app,
-            ),
-            render_standard_message(
-                Message::new(vec![MessageItem::clickable(
-                    vec![
-                        MessageItem::keystroke(Keystroke {
-                            key: "up".to_owned(),
-                            ..Default::default()
-                        }),
-                        MessageItem::text("cycle past commands and conversations"),
-                    ],
-                    |ctx| {
-                        ctx.dispatch_typed_action(TerminalAction::OpenInlineHistoryMenu);
-                    },
-                    self.state_handles.open_history_menu.clone(),
-                )]),
-                app,
-            ),
-        ];
+            ));
+        }
+
+        items.push(render_standard_message(
+            Message::new(vec![MessageItem::clickable(
+                vec![
+                    MessageItem::keystroke(Keystroke {
+                        key: "up".to_owned(),
+                        ..Default::default()
+                    }),
+                    MessageItem::text("cycle past commands and conversations"),
+                ],
+                |ctx| {
+                    ctx.dispatch_typed_action(TerminalAction::OpenInlineHistoryMenu);
+                },
+                self.state_handles.open_history_menu.clone(),
+            )]),
+            app,
+        ));
 
         if *TabSettings::as_ref(app).show_code_review_button
             && let Some(keystroke) =

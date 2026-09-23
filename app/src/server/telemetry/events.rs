@@ -1193,6 +1193,7 @@ impl From<QueuedQueryOrigin> for TelemetryQueuedQueryOrigin {
 pub enum QueuedPromptSendNowTrigger {
     SendNowButton,
     EnterOnEmptyInput,
+    Keybinding,
 }
 
 /// Details about which type of slash command was accepted

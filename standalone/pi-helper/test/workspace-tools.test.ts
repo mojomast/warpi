@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canonicalCall, WorkspaceToolBroker, type BrokerHost } from "../src/workspace-tools.ts";
+import {
+  canonicalCall,
+  createWorkspaceTools,
+  STANDALONE_SYSTEM_GUIDANCE,
+  WORKSPACE_TOOL_NAMES,
+  WorkspaceToolBroker,
+  type BrokerHost,
+} from "../src/workspace-tools.ts";
 import { deriveCompactionSettings } from "../src/runtime.ts";
 
 class RecordingHost implements BrokerHost {
@@ -17,6 +24,34 @@ test("canonical calls map model tools to workspace calls", () => {
   assert.equal(canonicalCall("edit", {}), "workspace.edit_file");
   assert.equal(canonicalCall("glob", {}), "workspace.glob");
   assert.equal(canonicalCall("grep", {}), "workspace.grep");
+  assert.equal(canonicalCall("bash_output", {}), "workspace.read_shell_command_output");
+});
+
+test("registered tools expose the non-interactive guardrails to the model", () => {
+  const tools = createWorkspaceTools("owner-1", new WorkspaceToolBroker(new RecordingHost()));
+  assert.deepEqual(
+    tools.map((tool) => tool.name).sort(),
+    ["bash", "bash_output", "edit", "glob", "grep", "read", "write"],
+  );
+
+  const bash = tools.find((tool) => tool.name === "bash");
+  assert.ok(bash !== undefined, "bash tool is registered");
+  for (const phrase of ["no stdin", "non-interactive", "BatchMode", "timeout 60s", "bash_output"]) {
+    assert.match(bash.description, new RegExp(phrase), `bash description should mention ${phrase}`);
+  }
+
+  const bashOutput = tools.find((tool) => tool.name === "bash_output");
+  assert.ok(bashOutput !== undefined, "bash_output tool is registered");
+  assert.match(bashOutput.description, /maximum 120/);
+  assert.match(bashOutput.description, /cannot stop it/);
+
+  for (const phrase of ["no stdin", "non-interactive", "tail -f", "BatchMode", "timeout 60s"]) {
+    assert.match(STANDALONE_SYSTEM_GUIDANCE, new RegExp(phrase), `guidance should mention ${phrase}`);
+  }
+  assert.deepEqual(
+    [...WORKSPACE_TOOL_NAMES].sort(),
+    ["bash", "bash_output", "edit", "glob", "grep", "read", "write"],
+  );
 });
 
 test("broker batches calls per owner, then resolves them independently", async () => {

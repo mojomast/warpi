@@ -1235,7 +1235,8 @@ impl AIBlock {
                 }
                 AISettingsChangedEvent::ThinkingDisplayMode { .. }
                 | AISettingsChangedEvent::OrchestrationMessageDisplayMode { .. }
-                | AISettingsChangedEvent::UsageDisplayUnit { .. } => {
+                | AISettingsChangedEvent::UsageDisplayUnit { .. }
+                | AISettingsChangedEvent::StandaloneResponseUsage { .. } => {
                     ctx.notify();
                 }
                 _ => {}
@@ -3580,6 +3581,18 @@ impl AIBlock {
                 self.enable_autoexecute_override(ctx);
             }
             RequestedCommandViewEvent::Rejected => {
+                // A standalone turn must learn that this call was denied by the
+                // user, not dropped by Warp, or the model is told to retry the
+                // exact command the user just rejected.
+                if crate::ai::standalone::is_enabled() {
+                    ctx.spawn(
+                        crate::ai::standalone::record_user_denial(
+                            &self.client_ids.conversation_id.to_string(),
+                            &action_id.to_string(),
+                        ),
+                        |_, _, _| {},
+                    );
+                }
                 self.cancel_action(action_id, ctx);
                 self.yield_requested_action_focus_if_focused(&view, ctx);
             }

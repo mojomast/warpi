@@ -154,8 +154,12 @@ const ALL_SECTIONS: &[SettingsSection] = &[
 /// Sections whose user-facing Display label has deliberately diverged from the
 /// slug it was seeded from, because the slug is a stored contract that the
 /// rename must not follow.
-const SECTIONS_WITH_RENAMED_DISPLAY_LABELS: &[SettingsSection] =
-    &[SettingsSection::WarpCloudAgentAPIKeys];
+const SECTIONS_WITH_RENAMED_DISPLAY_LABELS: &[SettingsSection] = &[
+    SettingsSection::WarpCloudAgentAPIKeys,
+    // The fork renamed the user-facing label to "Local Pi provider"; the
+    // slug stays "LocalPiProvider" because it is a stored contract.
+    SettingsSection::LocalProvider,
+];
 
 #[test]
 fn all_sections_list_is_exhaustive() {

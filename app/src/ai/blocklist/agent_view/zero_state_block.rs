@@ -733,27 +733,27 @@ fn render_body(props: ZeroStateBodyProps<'_>, app: &AppContext) -> Vec<Box<dyn E
             vec![recent_conversations_section]
         }
         _ => {
-            let mut body_items = vec![
-                render_standard_message(
-                    Message::new(vec![MessageItem::clickable(
-                        vec![
-                            MessageItem::keystroke(
-                                ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone(),
-                            ),
-                            MessageItem::text("start a new agent conversation"),
-                        ],
-                        |ctx| {
-                            ctx.dispatch_typed_action(TerminalAction::StartNewAgentConversation {
-                                origin: AgentViewEntryOrigin::Input {
-                                    was_prompt_autodetected: false,
-                                },
-                            });
-                        },
-                        state_handles.start_new_conversation.clone(),
-                    )]),
-                    app,
-                ),
-                render_standard_message(
+            let mut body_items = vec![render_standard_message(
+                Message::new(vec![MessageItem::clickable(
+                    vec![
+                        MessageItem::keystroke(ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()),
+                        MessageItem::text("start a new agent conversation"),
+                    ],
+                    |ctx| {
+                        ctx.dispatch_typed_action(TerminalAction::StartNewAgentConversation {
+                            origin: AgentViewEntryOrigin::Input {
+                                was_prompt_autodetected: false,
+                            },
+                        });
+                    },
+                    state_handles.start_new_conversation.clone(),
+                )]),
+                app,
+            )];
+
+            // Cloud agents do not exist without the Warp backend.
+            if !crate::standalone_ui::hidden_ui() {
+                body_items.push(render_standard_message(
                     Message::new(vec![MessageItem::clickable(
                         vec![
                             MessageItem::keystroke(
@@ -767,24 +767,25 @@ fn render_body(props: ZeroStateBodyProps<'_>, app: &AppContext) -> Vec<Box<dyn E
                         state_handles.start_cloud_conversation.clone(),
                     )]),
                     app,
-                ),
-                render_standard_message(
-                    Message::new(vec![MessageItem::clickable(
-                        vec![
-                            MessageItem::keystroke(Keystroke {
-                                key: "/model".to_owned(),
-                                ..Default::default()
-                            }),
-                            MessageItem::text("switch model"),
-                        ],
-                        |ctx| {
-                            ctx.dispatch_typed_action(TerminalAction::OpenModelSelector);
-                        },
-                        state_handles.switch_model.clone(),
-                    )]),
-                    app,
-                ),
-            ];
+                ));
+            }
+
+            body_items.push(render_standard_message(
+                Message::new(vec![MessageItem::clickable(
+                    vec![
+                        MessageItem::keystroke(Keystroke {
+                            key: "/model".to_owned(),
+                            ..Default::default()
+                        }),
+                        MessageItem::text("switch model"),
+                    ],
+                    |ctx| {
+                        ctx.dispatch_typed_action(TerminalAction::OpenModelSelector);
+                    },
+                    state_handles.switch_model.clone(),
+                )]),
+                app,
+            ));
 
             // Only show "escape to go back" if there's a parent terminal
             if has_parent_terminal {
@@ -1009,6 +1010,9 @@ fn should_render_oz_updates_section(
 }
 
 fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<dyn Element>> {
+    if crate::standalone_ui::hidden_ui() {
+        return None;
+    }
     let changelog_model = ChangelogModel::as_ref(app);
     let should_show_oz_updates = *AISettings::as_ref(app)
         .should_show_oz_updates_in_zero_state

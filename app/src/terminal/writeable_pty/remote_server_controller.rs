@@ -224,6 +224,15 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 self.flush_stashed_bootstrap(old_info, ctx);
             }
         }
+        // Standalone mode never probes, downloads, or launches Warp's remote
+        // server: initialize the shell with the plain bootstrap path instead.
+        // This is the earliest point the SSH remote-server flow can start, so
+        // even a persisted `ssh_extension_install_mode` cannot reach the
+        // manager.
+        if crate::standalone_ui::hides_ssh_warpification() {
+            self.flush_stashed_bootstrap(info, ctx);
+            return;
+        }
         let transport = SshTransport::new(
             socket_path,
             self.build_auth_context(ctx),
@@ -279,7 +288,14 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             return;
         }
 
+        // Standalone mode must not connect to or install Warp's remote server,
+        // even when the remote host already has the binary, so it falls back to
+        // the plain SSH bootstrap path for every result.
+        let standalone = crate::standalone_ui::hides_ssh_warpification();
         match result {
+            Ok(true) if standalone => {
+                self.flush_stashed_bootstrap(session_info, ctx);
+            }
             Ok(true) => {
                 let socket_path = transport.socket_path().clone();
                 let warp_owns_control_master = transport.warp_owns_control_master();
@@ -297,7 +313,10 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                     ctx,
                 );
             }
-            Ok(false) if has_old_binary => {
+            // The auto-update path ignores the install mode, so it needs its
+            // own standalone guard; standalone falls through to the effective
+            // mode below, which is always `NeverInstall`.
+            Ok(false) if has_old_binary && !standalone => {
                 // Auto-update: a prior install exists, so skip the modal
                 // and reinstall.
                 self.did_install = true;
@@ -313,9 +332,12 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 });
             }
             Ok(false) => {
-                let install_mode = *WarpifySettings::as_ref(ctx)
-                    .ssh_extension_install_mode
-                    .value();
+                let install_mode = effective_ssh_extension_install_mode(
+                    *WarpifySettings::as_ref(ctx)
+                        .ssh_extension_install_mode
+                        .value(),
+                    standalone,
+                );
                 match install_mode {
                     SshExtensionInstallMode::AlwaysAsk => {
                         self.state = SshInitState::AwaitingUserChoice {
@@ -357,6 +379,18 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         session_id: SessionId,
         ctx: &mut ModelContext<Self>,
     ) {
+        // Standalone mode never exposes the choice block, so this is a backstop:
+        // a stray install request is handled like a skip and the shell is
+        // initialized with the plain bootstrap path.
+        if crate::standalone_ui::hides_ssh_warpification() {
+            if let SshInitState::AwaitingUserChoice { session_info, .. } =
+                std::mem::replace(&mut self.state, SshInitState::Idle)
+            {
+                self.flush_stashed_bootstrap(session_info, ctx);
+            }
+            return;
+        }
+
         let SshInitState::AwaitingUserChoice { .. } = self.state else {
             log::warn!(
                 "Remote server install requested in unexpected state: session={session_id:?}"
@@ -578,6 +612,20 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 ctx,
             );
         });
+    }
+}
+
+/// The install mode the controller should honor. Standalone mode forces
+/// `NeverInstall` so a persisted "always ask"/"always install" preference can
+/// never fetch Warp's remote-server artifact or launch its daemon.
+fn effective_ssh_extension_install_mode(
+    configured: SshExtensionInstallMode,
+    standalone: bool,
+) -> SshExtensionInstallMode {
+    if standalone {
+        SshExtensionInstallMode::NeverInstall
+    } else {
+        configured
     }
 }
 

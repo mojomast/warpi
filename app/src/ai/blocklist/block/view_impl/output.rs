@@ -114,6 +114,7 @@ use crate::ai::skills::{
     SkillManager, SkillOpenOrigin, icon_override_for_skill_name, render_skill_button,
     skill_path_from_location,
 };
+use crate::ai::standalone::usage_model;
 use crate::appearance::Appearance;
 use crate::code::diff_viewer::DisplayMode;
 use crate::code::editor_management::CodeSource;
@@ -1174,6 +1175,10 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                     output_items.add_child(footer);
                 }
 
+                if let Some(usage_line) = render_standalone_usage_line(props, app) {
+                    output_items.add_child(usage_line);
+                }
+
                 if let Some(request_refunded_count) = props.request_refunded_count {
                     match request_refunded_count.cmp(&1) {
                         Ordering::Equal | Ordering::Less => {
@@ -2202,10 +2207,13 @@ fn render_stopped_output(props: Props, app: &AppContext) -> Box<dyn Element> {
         .finish(),
     ]);
 
-    // Only show resume button for the latest cancelled task in the conversation
-    if props
-        .model
-        .is_latest_exchange_in_terminal_pane(props.terminal_view_id, app)
+    // Only show resume button for the latest cancelled task in the conversation.
+    // A resume is a server-backed request, so it can never work against the
+    // local standalone backend.
+    if !crate::standalone_ui::hidden_ui()
+        && props
+            .model
+            .is_latest_exchange_in_terminal_pane(props.terminal_view_id, app)
         && FeatureFlag::AIResumeButton.is_enabled()
     {
         let ui_builder = appearance.ui_builder().clone();
@@ -3484,6 +3492,45 @@ fn turn_panel_data_for_block(props: Props, app: &AppContext) -> Option<TurnPanel
     let exchange_id = props.model.exchange_id(app)?;
     let conversation = props.model.conversation(app)?;
     conversation.turn_panel_data(exchange_id)
+}
+
+/// The standalone (local Pi) per-response usage footnote: tokens, throughput,
+/// duration, and estimated cost. Renders nothing for cloud conversations or when
+/// the user turned the setting off.
+fn render_standalone_usage_line(props: Props, app: &AppContext) -> Option<Box<dyn Element>> {
+    if !crate::ai::standalone::is_enabled() || !*AISettings::as_ref(app).standalone_response_usage {
+        return None;
+    }
+    let conversation = props.model.conversation(app)?;
+    let exchange_id = props.model.exchange_id(app)?;
+    let entry = conversation
+        .request_ids_for_exchange(exchange_id)
+        .iter()
+        .find_map(|request_id| usage_model::entry_for_request(request_id))
+        .or_else(|| {
+            usage_model::StandaloneUsageEntry::from_request_metadata(
+                &conversation.request_metadata_records_for_exchange(exchange_id),
+            )
+        })?;
+    let line = usage_model::format_usage_line(&entry)?;
+
+    let appearance = Appearance::as_ref(app);
+    let theme = appearance.theme();
+    let text = Text::new(
+        line,
+        appearance.ui_font_family(),
+        appearance.ui_font_size() - 2.,
+    )
+    .with_color(blended_colors::text_disabled(theme, theme.background()))
+    .soft_wrap(false)
+    .with_clip(warpui::text_layout::ClipConfig::ellipsis())
+    .finish();
+
+    Some(
+        Container::new(Shrinkable::new(1., text).finish())
+            .with_margin_top(6.)
+            .finish(),
+    )
 }
 
 fn render_response_footer(props: Props, app: &AppContext) -> Option<Box<dyn Element>> {

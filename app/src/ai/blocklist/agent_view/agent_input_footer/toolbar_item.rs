@@ -183,6 +183,16 @@ impl AgentToolbarItemKind {
     /// Feature-flag checks live in `all_available()` / `default_*()`. This method
     /// handles runtime conditions that depend on user settings or workspace state.
     pub fn is_available(&self, app: &warpui::AppContext) -> bool {
+        // Plan usage, remote control, and cloud handoff all require the Warp
+        // backend, which the standalone mode replaces with a local endpoint.
+        if crate::standalone_ui::hidden_ui()
+            && matches!(
+                self,
+                Self::UsageSummary | Self::ShareSession | Self::HandoffToCloud
+            )
+        {
+            return false;
+        }
         match self {
             Self::HandoffToCloud => AISettings::as_ref(app).is_cloud_handoff_enabled(app),
             // Drops the item from the toolbar editor once the flag goes off. The render
@@ -231,18 +241,20 @@ impl AgentToolbarItemKind {
             Self::ContextChip(ContextChipKind::AgentPlanAndTodoList),
             Self::ContextWindowUsage,
         ];
-        if FeatureFlag::PricingTransparency.is_enabled() {
+        if FeatureFlag::PricingTransparency.is_enabled() && !crate::standalone_ui::hidden_ui() {
             items.push(Self::UsageSummary);
         }
         items.push(Self::ModelSelector);
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::ShareSession);
         }
         if FeatureFlag::OzHandoff.is_enabled()
             && FeatureFlag::HandoffLocalCloud.is_enabled()
             && cfg!(all(feature = "local_fs", not(target_family = "wasm")))
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::HandoffToCloud);
         }
@@ -266,7 +278,7 @@ impl AgentToolbarItemKind {
             // Opt-in only: deliberately absent from `default_left`/`default_right`.
             Self::FileExplorer,
         ]);
-        if FeatureFlag::PricingTransparency.is_enabled() {
+        if FeatureFlag::PricingTransparency.is_enabled() && !crate::standalone_ui::hidden_ui() {
             items.push(Self::UsageSummary);
         }
         if FeatureFlag::FastForwardAutoexecuteButton.is_enabled() {
@@ -274,12 +286,14 @@ impl AgentToolbarItemKind {
         }
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::ShareSession);
         }
         if FeatureFlag::OzHandoff.is_enabled()
             && FeatureFlag::HandoffLocalCloud.is_enabled()
             && cfg!(all(feature = "local_fs", not(target_family = "wasm")))
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::HandoffToCloud);
         }
@@ -295,6 +309,7 @@ impl AgentToolbarItemKind {
         ];
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::ShareSession);
         }
@@ -329,6 +344,7 @@ impl AgentToolbarItemKind {
         ]);
         if FeatureFlag::CreatingSharedSessions.is_enabled()
             && FeatureFlag::HOARemoteControl.is_enabled()
+            && !crate::standalone_ui::hidden_ui()
         {
             items.push(Self::ShareSession);
         }

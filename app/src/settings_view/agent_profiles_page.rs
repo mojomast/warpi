@@ -2057,6 +2057,11 @@ impl UsageWidget {
 impl SettingsWidget for UsageWidget {
     type View = AgentProfilesPageView;
 
+    /// Warp-plan usage limits do not apply to the local standalone backend.
+    fn should_render(&self, _app: &AppContext) -> bool {
+        !crate::standalone_ui::hidden_ui()
+    }
+
     fn search_terms(&self) -> &str {
         "a.i. ai usage limit plan"
     }

@@ -45,17 +45,26 @@ fail() {
     || fail "missing $HELPER_DIR/node_modules (run npm ci in standalone/pi-helper first)"
 [ -f "$REPO_ROOT/packaging/install.sh" ] || fail "missing packaging/install.sh"
 [ -f "$REPO_ROOT/packaging/config.example.json" ] || fail "missing packaging/config.example.json"
+[ -f "$REPO_ROOT/app/channels/warpi/dev.warpi.Warpi.desktop" ] || fail "missing warpi desktop entry"
+[ -d "$REPO_ROOT/app/channels/warpi/icon/no-padding" ] || fail "missing warpi channel icons"
 [ -f "$REPO_ROOT/LICENSE-AGPL" ] && [ -f "$REPO_ROOT/LICENSE-MIT" ] \
     || fail "missing LICENSE-AGPL / LICENSE-MIT at the repository root"
 [ -f "$REPO_ROOT/THIRD_PARTY_LICENSES.txt" ] \
     || fail "missing THIRD_PARTY_LICENSES.txt at the repository root"
 
 rm -rf "$PKG_DIR"
-mkdir -p "$PKG_DIR/standalone" "$STAGE_HELPER"
+mkdir -p "$PKG_DIR/standalone" "$STAGE_HELPER" "$PKG_DIR/share/applications" "$PKG_DIR/share/icons/hicolor"
 
 install -m 0755 "$BINARY" "$PKG_DIR/warpi"
 install -m 0755 "$REPO_ROOT/packaging/install.sh" "$PKG_DIR/install.sh"
 install -m 0644 "$REPO_ROOT/packaging/config.example.json" "$PKG_DIR/config.example.json"
+install -m 0644 "$REPO_ROOT/app/channels/warpi/dev.warpi.Warpi.desktop" "$PKG_DIR/share/applications/"
+for size in 16x16 32x32 48x48 64x64 128x128 256x256 512x512; do
+    icon="$REPO_ROOT/app/channels/warpi/icon/no-padding/$size.png"
+    if [ -f "$icon" ]; then
+        install -Dm644 "$icon" "$PKG_DIR/share/icons/hicolor/$size/apps/dev.warpi.Warpi.png"
+    fi
+done
 install -m 0644 "$REPO_ROOT/LICENSE-AGPL" "$REPO_ROOT/LICENSE-MIT" "$PKG_DIR/"
 [ -f "$REPO_ROOT/LICENSE-NOTES.md" ] && install -m 0644 "$REPO_ROOT/LICENSE-NOTES.md" "$PKG_DIR/"
 install -m 0644 "$REPO_ROOT/THIRD_PARTY_LICENSES.txt" "$PKG_DIR/"

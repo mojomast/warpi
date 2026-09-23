@@ -1037,7 +1037,7 @@ copyright = "© 2025, Denver Technologies, Inc"
 identifier = "dev.warpi.warpi"
 name = "warpi"
 resources = ["assets/onboarding"]
-icon = ["channels/oss/icon/no-padding/512x512.png", "channels/oss/icon/no-padding/icon.ico"]
+icon = ["channels/warpi/icon/icon.icns"]
 short_description = "warpi: Warp with a local Pi-powered agent backend and no Warp account required."
 
 [package.metadata.bundle.bin.stable]

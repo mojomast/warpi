@@ -343,14 +343,26 @@ process.exit(0);"#,
                     .as_ref()
                     .and_then(|data| data.get("keys"))
                     .and_then(|keys| keys.as_array())
-                    .map(|values| values.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_str())
+                            .map(str::to_string)
+                            .collect()
+                    })
                     .unwrap_or_default();
                 break;
             }
         }
         unsafe { std::env::remove_var("WARPI_TEST_SECRET") };
-        assert!(!keys.iter().any(|key| key == "WARPI_TEST_SECRET"), "keys: {keys:?}");
-        assert!(keys.contains(&"HOME".to_string()), "HOME must be set to the private dir");
+        assert!(
+            !keys.iter().any(|key| key == "WARPI_TEST_SECRET"),
+            "keys: {keys:?}"
+        );
+        assert!(
+            keys.contains(&"HOME".to_string()),
+            "HOME must be set to the private dir"
+        );
         helper.shutdown().await;
     }
 }

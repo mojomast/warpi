@@ -1080,6 +1080,9 @@ impl LLMPreferences {
         team_uid: Option<ServerId>,
         app: &'a AppContext,
     ) -> impl Iterator<Item = &'a LLMInfo> + use<'a> {
+        // Standalone inference has no Warp model catalog, so the picker only
+        // offers the locally configured endpoint(s).
+        let show_warp_models = !crate::standalone_ui::hidden_ui();
         // Don't show admin-disabled models in the dropdown
         let routers_enabled = FeatureFlag::CustomModelRouters.is_enabled();
         UserWorkspaces::as_ref(app)
@@ -1087,7 +1090,10 @@ impl LLMPreferences {
             .agent_mode
             .choices
             .iter()
-            .filter(|llm| !matches!(llm.disable_reason, Some(DisableReason::AdminDisabled)))
+            .filter(move |llm| {
+                show_warp_models
+                    && !matches!(llm.disable_reason, Some(DisableReason::AdminDisabled))
+            })
             // Gate cloud/team routers behind the same flag as local routers so
             // the entire custom-router feature is controlled by one flag.
             .filter(move |llm| {
@@ -1746,7 +1752,9 @@ impl LLMPreferences {
         #[cfg(not(target_family = "wasm"))]
         if let Some((profile_id, model_id)) = standalone_llm_identity(preferred_llm_id.as_str()) {
             let result = match model_id {
-                Some(model_id) => crate::ai::standalone::set_active_profile_model(profile_id, model_id),
+                Some(model_id) => {
+                    crate::ai::standalone::set_active_profile_model(profile_id, model_id)
+                }
                 None => crate::ai::standalone::set_active_profile(profile_id),
             };
             if let Err(error) = result {
@@ -2348,7 +2356,10 @@ pub fn standalone_llm_identity(llm_id: &str) -> Option<(&str, Option<&str>)> {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn standalone_llm_info(profile: &standalone_agent::provider::ProviderProfile, model_id: &str) -> LLMInfo {
+fn standalone_llm_info(
+    profile: &standalone_agent::provider::ProviderProfile,
+    model_id: &str,
+) -> LLMInfo {
     LLMInfo {
         display_name: if profile.enabled_models().len() > 1 {
             format!("{} · {model_id}", profile.display_name)

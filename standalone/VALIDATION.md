@@ -3,10 +3,10 @@
 Status legend: **PASS** (reproduced here), **FAIL**, **NOT RUN** (no runner or
 not attempted). Every claim names the command or the artifact that produced it.
 
-Status updated 2026-09-23: the tree gained the S1/S2/S4 turn-lifecycle suites
-(`tool_result_loss.rs`, `untranslatable_calls.rs`, `cancel_settlement.rs`), the
-FIFO queueing tests, and the `bash_output` tests after the last recorded full
-run. Counts below are a source inventory at HEAD `d49521c`; the recorded logs
+Status updated 2026-09-23: the tree gained the S1/S2/S4 turn-lifecycle suites,
+the FIFO queueing tests, the `bash_output` tests, and the paused-turn/rejection/
+reopen/reattach/compaction/transcript-repair suites after the last recorded full
+run. Counts below are a source inventory at HEAD `9cd8443`; the recorded logs
 predate them, so those suites are marked NOT RE-RUN rather than PASS.
 
 ## Source pins
@@ -31,9 +31,9 @@ an `alsa.pc` stub, `RUST_FONTCONFIG_DLOPEN=1`, `CARGO_INCREMENTAL=0` — see
 | Suite | Command | Result |
 | --- | --- | --- |
 | Rust backend (last recorded full run) | `cargo test -p standalone_agent` | **PASS** — 14 unit + 1 session-isolation + 9 vertical slice (`evidence/rust-tests.log`, recorded before the S1/S2/S4 additions) |
-| Rust backend (current source inventory) | `cargo test -p standalone_agent` | **NOT RE-RUN** — 56 test functions: 14 `bridge`, 11 vertical slice, 9 `warp_events`, 6 `provider`, 5 `protocol`, 3 untranslatable calls, 2 `tool_result_loss`, 2 `secrets`, 1 each `session_isolation`, `cancel_settlement`, `real_provider`, `helper` |
+| Rust backend (current source inventory) | `cargo test -p standalone_agent` | **NOT RE-RUN** — 105 test functions at `9cd8443`: 26 `usage_ledger`, 23 `bridge`, 11 each vertical slice and `warp_events`, 8 `protocol`, 7 `provider`, 3 untranslatable calls, 2 each `tool_result_loss`, `session_reopen`, `duplicate_and_reattach`, `secrets`, 1 each `user_rejection`, `transcript_repair`, `session_isolation`, `real_provider`, `paused_turn_cancel`, `compaction_watchdog`, `cancel_settlement`, `helper` |
 | Pi helper (last recorded full run) | `cd standalone/pi-helper && npm test` | **PASS** — 13 tests (`evidence/helper-tests.log`) |
-| Pi helper (current source inventory) | `cd standalone/pi-helper && npm test` | **NOT RE-RUN** — 14 tests: 4 protocol, 4 runtime smoke, 6 broker (`bash_output` brokering and the non-interactive guardrail test post-date the log) |
+| Pi helper (current source inventory) | `cd standalone/pi-helper && npm test` | **NOT RE-RUN** — 37 tests at `67bcb84`: 14 subagents, 6 broker, 4 protocol, 4 runtime smoke, 4 usage telemetry, 3 transcript repair, 2 usage live |
 | App compile | `cargo check -p warp --bin warpi --features gui` | **PASS** at the recorded revision; not re-run here |
 | App test targets | `cargo check -p warp --tests --features gui` | **PASS** at the recorded revision; not re-run here |
 | Native build | `cargo build -p warp --bin warpi --features gui` | **PASS** — 4m16s, 1.0 GB debug binary (`evidence/gui-build.log`) |
@@ -41,12 +41,19 @@ an `alsa.pc` stub, `RUST_FONTCONFIG_DLOPEN=1`, `CARGO_INCREMENTAL=0` — see
 Highlights covered by the Rust suites: the M1 round trip against a loopback
 fixture with the real helper; `auth=none` wire assertions; two-session
 isolation; cancellation, including a helper that never acknowledges `turn.cancel`
-(cancel settlement); FIFO queueing and cancelling a queued prompt without touching
-the running turn; provider-failure classification; foreign/duplicate/stale tool
-results; a dropped result (synthesized in the same `turn.resume`); an
-untranslatable tool call answered in place; new conversations with no task
-context; and the `CreateTask` gating fix (a server-backed task is never upgraded
-twice).
+(cancel settlement) and a turn paused on an approval card (`paused_turn_cancel`);
+FIFO queueing and cancelling a queued prompt without touching the running turn;
+user rejection answered as `Rejected` while the call is still pending
+(`user_rejection`);
+provider-failure classification; foreign/duplicate/stale tool results; a dropped
+result (synthesized in the same `turn.resume`); an untranslatable tool call
+answered in place; a duplicate-only retry re-attaching to a live continuation
+(`duplicate_and_reattach`); session reopen on a changed fingerprint
+(`session_reopen`); transcript repair for dangling tool calls
+(`transcript_repair`); the compaction watchdog (`compaction_watchdog`); new
+conversations with no task context; and the `CreateTask` gating fix (a
+server-backed task is never upgraded twice). The usage-ledger suite is pure Rust
+and does not need a helper.
 
 **Real provider (adapter level, PASS)**: `cargo test -p standalone_agent
 --test real_provider` runs the full brokered loop against a live endpoint when
@@ -60,8 +67,9 @@ test result: ok. 1 passed
 
 Helper suites cover: protocol validation (version, size, order, UTF-8-safe
 truncation), broker semantics (batching, duplicates, oversized arguments,
-aborts), compaction settings, and four end-to-end provider scenarios including
-`auth=none` and fragmented tool-call arguments.
+aborts), compaction settings, usage telemetry, transcript repair for dangling
+tool calls, the opt-in `task` subagent prototype, and four end-to-end provider
+scenarios including `auth=none` and fragmented tool-call arguments.
 
 ## Native GUI verification (PASS)
 
@@ -73,7 +81,7 @@ no Warp server received agent traffic.
 | --- | --- | --- |
 | Native window, onboarding, terminal | **PASS** | `evidence/gui-native-window.png` |
 | Fresh agent conversation starts with the local model selected (`GUI Fixture (local endpoint · fixture-model)` in the model chip) | **PASS** | `evidence/gui-round-trip-complete.png` |
-| Native model selector lists every enabled model of every profile (`DeepSeek · deepseek-flash`, `DeepSeek · deepseek-v4-pro`, `Local fixture`) and selecting one switches the active profile (terminal output "The picker switched the active profile.") | **PASS** | `evidence/gui-model-picker-all-providers.png` |
+| Native model selector lists every enabled model of every profile (`DeepSeek · deepseek-flash`, `DeepSeek · deepseek-v4-pro`, `Local fixture`) and selecting one switches the active profile (terminal output "The picker switched the active profile.") | **PASS** | `evidence/gui-model-picker-all-providers.png` (predates the cloud-entry hiding: the `auto` entry in the screenshot no longer appears while standalone mode is on) |
 | Per-model enable/disable removes a model from the picker (only `deepseek-flash` offered after disabling the other) | **PASS** | `evidence/gui-model-toggle.png` |
 | Prompt → local provider receives the brokered tool schema and returns a `bash` tool call | **PASS** | fixture captures: request 1 = `[system, user]`, tool schema = our seven tools |
 | **Native tool approval card** ("OK if I run this command and read the output?", Reject/Edit/Run) | **PASS** | `evidence/gui-tool-approval.png` |
@@ -102,6 +110,7 @@ regression tests:
 | Conversation restart / idle restore in the GUI | **NOT RUN** | Durable Pi session mapping is implemented and exercised by the app code path; not yet driven through a restart in the GUI. |
 | Real (hosted) provider driven through the GUI | **NOT RUN** | The adapter-level round trip passes against DeepSeek (see above); no hosted provider has been driven through the GUI. No coding-performance claims are made. |
 | Queueing / send-now (`Ctrl+Alt+Shift+Enter`) in the GUI | **NOT RUN** | FIFO queueing is covered by Rust tests (app `send_queued_prompt_now_action_fires_the_head_row`, bridge queue tests, vertical-slice FIFO ordering); the hint, panel header, and keybinding have not been driven in the GUI. |
+| Approval rejection → `Rejected` in the GUI | **NOT RUN** | The bridge behavior (answer a still-pending denied call with `Rejected`) is covered by `crates/standalone_agent/tests/user_rejection.rs`; the app now sends a converted `cancelled` error result for a rejected shell call (`9cd8443`), so the typed status is not guaranteed end-to-end. Neither path is driven in the GUI, and the diff-review Reject path is not wired at all (see risk 5). |
 | Long-running command snapshot + `bash_output` in the GUI | **NOT RUN** | Snapshot-to-error rendering and the `bash_output` clamp are unit-tested in Rust and the helper; no GUI run yet. |
 | Windows / macOS native build and GUI | **NOT RUN** | No runners. WSL is not a native Windows test. |
 | Full egress audit of the GUI process | **NOT RUN** | Source-level inventory in `NETWORK_DEPENDENCIES.md`; the GUI run did confirm that agent traffic went to the loopback fixture only. |
@@ -144,13 +153,19 @@ final   : "Warpi round trip complete."
    an effect but before its result leaves an unknown state; no automatic retry.
 4. **Helper process control is single-process.** No POSIX process group or job
    object; the helper spawns no children in v1.
-5. **Known turn/queue caveat.** Stop / send-now cannot cancel a turn paused on an
-   approval card; the queued prompt waits for the 30-minute pending-tool deadline
-   (or indefinitely with `WARPI_PENDING_TOOL_TIMEOUT_SECS=0`). A fix is in
-   progress in the working tree but not committed (2026-09-23). A profile or
-   model switch also does not apply to a conversation whose helper session is
-   already open, and the session map can lose an entry under concurrent first
-   requests (see `ARCHITECTURE.md`).
+5. **Known turn/queue caveats (updated 2026-09-23).** Stop / send-now now cancel
+   a turn paused on an approval card (`bda8df4`), turn-death events withdraw its
+   approval cards (`251da37`), a profile/model/key/cwd change reopens the session
+   on the next fresh prompt (`251da37`), and the session-map write is locked and
+   atomic (`251da37`). What is still open: a rejected shell call now returns a
+   converted `CommandFinished{exit_code:-1}` error result (`9cd8443`), but the
+   bridge's typed `Rejected` path is not guaranteed end-to-end because the
+   app-sent result takes precedence, delivery waits for the next request, and the
+   denial-vs-follow-up ordering is untested; the diff-review Reject path is not
+   wired to the deny registry; malformed-frame scoping has no dedicated test; a
+   compaction longer than 600 s still cancels the turn; and helper shutdown on
+   app teardown is best-effort (`try_lock`, and a session whose lock is held is
+   skipped).
 6. **Packaging is not updated for the rename.** `script/linux/*` and
    `script/windows/*` bundlers still contain the old `oss` channel case; the
    development entrypoints (`script/run`, `script/run-tui`) and the CI check

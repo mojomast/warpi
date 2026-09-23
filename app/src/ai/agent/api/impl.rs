@@ -149,8 +149,12 @@ pub async fn generate_multi_agent_output(
     // supervised Pi helper. There is no fallback in either direction.
     #[cfg(not(target_family = "wasm"))]
     if let Some(standalone) = params.standalone.take() {
-        return crate::ai::standalone::generate_standalone_output(standalone, request, cancellation_rx)
-            .map_err(|error| ConvertToAPITypeError::from(anyhow::Error::from(error)));
+        return crate::ai::standalone::generate_standalone_output(
+            standalone,
+            request,
+            cancellation_rx,
+        )
+        .map_err(|error| ConvertToAPITypeError::from(anyhow::Error::from(error)));
     }
 
     let response_stream = warp_multi_agent_client::generate_multi_agent_output(

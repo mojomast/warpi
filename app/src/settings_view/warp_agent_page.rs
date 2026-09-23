@@ -2106,6 +2106,10 @@ impl WarpAgentPageView {
             ));
         }
 
+        // Account-backed inference configuration is unavailable without a Warp
+        // account; the local endpoint is configured on the Local Pi provider page.
+        let standalone = crate::standalone_ui::hidden_ui();
+
         categories.push(Category::new(
             "Input",
             vec![
@@ -2122,7 +2126,8 @@ impl WarpAgentPageView {
         let voice_supported = cfg!(feature = "voice_input")
             && ai_settings
                 .voice_input_enabled_internal
-                .is_supported_on_current_platform();
+                .is_supported_on_current_platform()
+            && !standalone;
         if voice_supported {
             categories.push(Category::new(
                 "Voice",
@@ -2130,42 +2135,47 @@ impl WarpAgentPageView {
             ));
         }
 
-        categories.push(Category::new(
-            "Cloud Handoff",
-            vec![
-                Box::new(CloudHandoffWidget::default()),
-                Box::new(AutoHandoffOnSleepWidget::default()),
-                Box::new(AmpersandHandoffWidget::default()),
-            ],
-        ));
+        if !standalone {
+            categories.push(Category::new(
+                "Cloud Handoff",
+                vec![
+                    Box::new(CloudHandoffWidget::default()),
+                    Box::new(AutoHandoffOnSleepWidget::default()),
+                    Box::new(AmpersandHandoffWidget::default()),
+                ],
+            ));
+        }
 
-        let page_view_handle = ctx.handle();
-        categories.push(Category::with_header(
-            CategoryHeader::new("Custom Inference").with_trailing_element(
-                move |view: &Self, _appearance, app| {
-                    let workspaces = UserWorkspaces::as_ref(app);
-                    let team_scope = workspaces.team_context(&page_view_handle, app);
-                    let shows_custom_inference =
-                        CustomInferenceVisibility::compute(&team_scope, app).show_custom_inference;
-                    if shows_custom_inference {
-                        view.custom_inference_add_button.as_ref(app).render(app)
-                    } else {
-                        Empty::new().finish()
-                    }
-                },
-            ),
-            vec![Box::new(ApiKeysWidget::new(ctx))],
-        ));
+        if !standalone {
+            let page_view_handle = ctx.handle();
+            categories.push(Category::with_header(
+                CategoryHeader::new("Custom Inference").with_trailing_element(
+                    move |view: &Self, _appearance, app| {
+                        let workspaces = UserWorkspaces::as_ref(app);
+                        let team_scope = workspaces.team_context(&page_view_handle, app);
+                        let shows_custom_inference =
+                            CustomInferenceVisibility::compute(&team_scope, app)
+                                .show_custom_inference;
+                        if shows_custom_inference {
+                            view.custom_inference_add_button.as_ref(app).render(app)
+                        } else {
+                            Empty::new().finish()
+                        }
+                    },
+                ),
+                vec![Box::new(ApiKeysWidget::new(ctx))],
+            ));
 
-        categories.push(Category::new(
-            "AWS Bedrock",
-            vec![Box::new(AwsBedrockWidget::new(ctx))],
-        ));
+            categories.push(Category::new(
+                "AWS Bedrock",
+                vec![Box::new(AwsBedrockWidget::new(ctx))],
+            ));
 
-        categories.push(Category::new(
-            "Gemini Enterprise",
-            vec![Box::new(GeminiEnterpriseWidget::new(ctx))],
-        ));
+            categories.push(Category::new(
+                "Gemini Enterprise",
+                vec![Box::new(GeminiEnterpriseWidget::new(ctx))],
+            ));
+        }
 
         if FeatureFlag::CustomModelRouters.is_enabled() {
             #[allow(clippy::vec_init_then_push)]
@@ -2197,7 +2207,7 @@ impl WarpAgentPageView {
         other_widgets.push(Box::new(ConversationLayoutPreferenceWidget));
         categories.push(Category::new("Other", other_widgets));
 
-        if FeatureFlag::AgentModeComputerUse.is_enabled() {
+        if FeatureFlag::AgentModeComputerUse.is_enabled() && !standalone {
             categories.push(Category::new(
                 "Experimental",
                 vec![Box::new(CloudAgentComputerUseWidget::default())],
@@ -2988,9 +2998,12 @@ fn render_global_ai_toggle(
     let is_ai_disabled_due_to_remote_session_org_policy =
         AISettings::as_ref(app).is_ai_disabled_due_to_remote_session_org_policy(app);
 
+    // The standalone backend serves AI locally, so there is no account to
+    // create and the master switch stays available.
     let is_anonymous = AuthStateProvider::as_ref(app)
         .get()
-        .is_anonymous_or_logged_out();
+        .is_anonymous_or_logged_out()
+        && !crate::standalone_ui::hidden_ui();
 
     let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
 
@@ -4083,7 +4096,7 @@ impl SettingsWidget for ShowOzUpdatesInZeroStateWidget {
     }
 
     fn should_render(&self, _app: &AppContext) -> bool {
-        FeatureFlag::AgentView.is_enabled()
+        FeatureFlag::AgentView.is_enabled() && !crate::standalone_ui::hidden_ui()
     }
 
     fn render(

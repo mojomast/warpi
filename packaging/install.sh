@@ -89,6 +89,26 @@ exec "\$WARPI_HOME/warpi" "\$@"
 EOF
 chmod 0755 "$LAUNCHER"
 
+# Install the desktop entry and hicolor icons so the launcher and its icon show up
+# in application menus. Best-effort: skip silently if the bundle predates them.
+DESKTOP_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+DESKTOP_SRC="$SCRIPT_DIR/share/applications/dev.warpi.Warpi.desktop"
+if [ -f "$DESKTOP_SRC" ]; then
+    install -d -m 0755 "$DESKTOP_HOME/applications"
+    sed "s|^Exec=warpi |Exec=$LAUNCHER |" "$DESKTOP_SRC" \
+        >"$DESKTOP_HOME/applications/dev.warpi.Warpi.desktop"
+    for size in 16x16 32x32 48x48 64x64 128x128 256x256 512x512; do
+        icon="$SCRIPT_DIR/share/icons/hicolor/$size/apps/dev.warpi.Warpi.png"
+        if [ -f "$icon" ]; then
+            install -Dm644 "$icon" "$DESKTOP_HOME/icons/hicolor/$size/apps/dev.warpi.Warpi.png"
+        fi
+    done
+    command -v update-desktop-database >/dev/null 2>&1 \
+        && update-desktop-database "$DESKTOP_HOME/applications" >/dev/null 2>&1 || true
+    command -v gtk-update-icon-cache >/dev/null 2>&1 \
+        && gtk-update-icon-cache -q -t -f "$DESKTOP_HOME/icons/hicolor" >/dev/null 2>&1 || true
+fi
+
 printf 'warpi installed:\n'
 printf '  binary:   %s\n' "$PREFIX/warpi"
 printf '  helper:   %s\n' "$PREFIX/pi-helper/dist/main.js"

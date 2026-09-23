@@ -15,16 +15,14 @@ use std::time::Duration;
 
 use standalone_agent::provider::{CredentialRef, ProviderProfile, WireProtocol};
 use warpui::elements::{
-    Container, CrossAxisAlignment, Element, Flex, MainAxisAlignment, MouseStateHandle, ParentElement,
-    Text,
+    ChildView, Container, CrossAxisAlignment, Element, Flex, MainAxisAlignment, MouseStateHandle,
+    ParentElement, Text,
 };
 use warpui::ui_components::button::ButtonVariant;
-use warpui::ui_components::components::UiComponentStyles;
-use warpui::elements::ChildView;
-use warpui::ui_components::components::UiComponent;
-use warpui::{AppContext, Entity, SingletonEntity, TypedActionView, UpdateView, View, ViewContext, ViewHandle};
-
-use crate::view_components::{Dropdown, DropdownItem};
+use warpui::ui_components::components::{UiComponent, UiComponentStyles};
+use warpui::{
+    AppContext, Entity, SingletonEntity, TypedActionView, UpdateView, View, ViewContext, ViewHandle,
+};
 
 use super::SettingsSection;
 use super::settings_page::{
@@ -36,6 +34,9 @@ use crate::appearance::Appearance;
 use crate::editor::{
     EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions,
 };
+use crate::settings::AISettings;
+use crate::view_components::{Dropdown, DropdownItem};
+use settings::Setting;
 
 const INPUT_WIDTH: f32 = 520.;
 const LABEL_MARGIN_BOTTOM: f32 = 4.;
@@ -45,9 +46,15 @@ const SECTION_MARGIN_BOTTOM: f32 = 24.;
 #[derive(Clone, Debug, PartialEq)]
 pub enum LocalProviderAction {
     SelectPreset(String),
-    ToggleModel { profile_id: String, model_id: String, enabled: bool },
+    ToggleModel {
+        profile_id: String,
+        model_id: String,
+        enabled: bool,
+    },
     ToggleEnabled,
     ToggleAuthMode,
+    ToggleResponseUsage,
+    ToggleContextMeter,
     Save,
     Test,
     NewProfile,
@@ -92,6 +99,8 @@ pub struct LocalProviderPageView {
     auth_button_mouse_state: MouseStateHandle,
     new_profile_button_mouse_state: MouseStateHandle,
     delete_profile_button_mouse_state: MouseStateHandle,
+    response_usage_button_mouse_state: MouseStateHandle,
+    context_meter_button_mouse_state: MouseStateHandle,
 }
 
 impl LocalProviderPageView {
@@ -189,6 +198,8 @@ impl LocalProviderPageView {
             auth_button_mouse_state: MouseStateHandle::default(),
             new_profile_button_mouse_state: MouseStateHandle::default(),
             delete_profile_button_mouse_state: MouseStateHandle::default(),
+            response_usage_button_mouse_state: MouseStateHandle::default(),
+            context_meter_button_mouse_state: MouseStateHandle::default(),
         }
     }
 
@@ -217,7 +228,9 @@ impl LocalProviderPageView {
             .parse::<u64>()
             .map_err(|_| "Output limit must be a whole number of tokens".to_string())?;
         let credential = if self.use_api_key {
-            CredentialRef::SecretStore { key: standalone::credential_key(&self.profile_id) }
+            CredentialRef::SecretStore {
+                key: standalone::credential_key(&self.profile_id),
+            }
         } else {
             CredentialRef::None
         };
@@ -242,13 +255,17 @@ impl LocalProviderPageView {
             reasoning: false,
             supports_image_input: false,
             headers: Default::default(),
+            pricing: Default::default(),
         };
         profile.validate().map_err(|error| error.to_string())?;
         Ok(profile)
     }
 
     fn set_status(&self, text: impl Into<String>, is_error: bool) {
-        *self.status.borrow_mut() = Some(StatusMessage { text: text.into(), is_error });
+        *self.status.borrow_mut() = Some(StatusMessage {
+            text: text.into(),
+            is_error,
+        });
     }
 
     fn save(&mut self, ctx: &mut ViewContext<Self>) {
@@ -271,7 +288,10 @@ impl LocalProviderPageView {
         if !self.use_api_key
             && let Err(error) = standalone::delete_credential_for(ctx, &profile.id)
         {
-            self.set_status(format!("Could not remove the stored API key: {error}"), true);
+            self.set_status(
+                format!("Could not remove the stored API key: {error}"),
+                true,
+            );
             ctx.notify();
             return;
         }
@@ -293,7 +313,9 @@ impl LocalProviderPageView {
                     );
                 }
             }
-            Err(error) => self.set_status(format!("Could not save the configuration: {error}"), true),
+            Err(error) => {
+                self.set_status(format!("Could not save the configuration: {error}"), true)
+            }
         }
         ctx.notify();
     }
@@ -353,7 +375,10 @@ impl LocalProviderPageView {
             (&self.display_name_editor, preset.display_name.to_string()),
             (&self.base_url_editor, preset.base_url.to_string()),
             (&self.model_id_editor, preset.suggested_model.to_string()),
-            (&self.additional_models_editor, preset.extra_models.join(", ")),
+            (
+                &self.additional_models_editor,
+                preset.extra_models.join(", "),
+            ),
             (&self.context_limit_editor, preset.context_limit.to_string()),
             (&self.output_limit_editor, preset.output_limit.to_string()),
         ];
@@ -370,17 +395,33 @@ impl LocalProviderPageView {
     }
 
     fn apply_profile(&mut self, profile: &ProviderProfile, ctx: &mut ViewContext<Self>) {
-        self.disabled_models.borrow_mut().clone_from(&profile.disabled_models);
+        self.disabled_models
+            .borrow_mut()
+            .clone_from(&profile.disabled_models);
         let values = [
-            (self.display_name_editor.clone(), profile.display_name.clone()),
+            (
+                self.display_name_editor.clone(),
+                profile.display_name.clone(),
+            ),
             (self.base_url_editor.clone(), profile.base_url.clone()),
             (self.model_id_editor.clone(), profile.model_id.clone()),
-            (self.additional_models_editor.clone(), profile.models.join(", ")),
-            (self.context_limit_editor.clone(), profile.context_limit.to_string()),
-            (self.output_limit_editor.clone(), profile.output_limit.to_string()),
+            (
+                self.additional_models_editor.clone(),
+                profile.models.join(", "),
+            ),
+            (
+                self.context_limit_editor.clone(),
+                profile.context_limit.to_string(),
+            ),
+            (
+                self.output_limit_editor.clone(),
+                profile.output_limit.to_string(),
+            ),
         ];
         for (editor, text) in values {
-            ctx.update_view(&editor, |editor: &mut EditorView, ctx| editor.set_buffer_text(&text, ctx));
+            ctx.update_view(&editor, |editor: &mut EditorView, ctx| {
+                editor.set_buffer_text(&text, ctx)
+            });
         }
         ctx.update_view(&self.api_key_editor, |editor: &mut EditorView, ctx| {
             editor.set_buffer_text("", ctx);
@@ -443,7 +484,10 @@ impl LocalProviderPageView {
     fn render_body(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let ui_builder = appearance.ui_builder();
         let theme = appearance.theme();
-        let input_style = UiComponentStyles { width: Some(INPUT_WIDTH), ..Default::default() };
+        let input_style = UiComponentStyles {
+            width: Some(INPUT_WIDTH),
+            ..Default::default()
+        };
 
         let mut column = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
@@ -464,10 +508,15 @@ impl LocalProviderPageView {
             Container::new(row(
                 ui_builder.span("Standalone mode:").build().finish(),
                 ui_builder
-                    .button(ButtonVariant::Secondary, self.enabled_button_mouse_state.clone())
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.enabled_button_mouse_state.clone(),
+                    )
                     .with_text_label(enabled_label.to_string())
                     .build()
-                    .on_click(|ctx, _, _| ctx.dispatch_typed_action(LocalProviderAction::ToggleEnabled))
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(LocalProviderAction::ToggleEnabled)
+                    })
                     .finish(),
             ))
             .with_margin_bottom(FIELD_MARGIN_BOTTOM)
@@ -488,16 +537,36 @@ impl LocalProviderPageView {
         );
 
         let fields: [(&str, &ViewHandle<EditorView>, &str); 6] = [
-            ("Display name", &self.display_name_editor, "e.g. Local llama.cpp"),
-            ("Base URL", &self.base_url_editor, "e.g. http://127.0.0.1:8080/v1"),
-            ("Model id (sent verbatim to the provider)", &self.model_id_editor, "e.g. qwen3-coder-30b"),
+            (
+                "Display name",
+                &self.display_name_editor,
+                "e.g. Local llama.cpp",
+            ),
+            (
+                "Base URL",
+                &self.base_url_editor,
+                "e.g. http://127.0.0.1:8080/v1",
+            ),
+            (
+                "Model id (sent verbatim to the provider)",
+                &self.model_id_editor,
+                "e.g. qwen3-coder-30b",
+            ),
             (
                 "Additional models (comma-separated)",
                 &self.additional_models_editor,
                 "e.g. deepseek-v4-pro, deepseek-reasoner",
             ),
-            ("Context limit (tokens)", &self.context_limit_editor, "e.g. 131072"),
-            ("Output limit (tokens)", &self.output_limit_editor, "e.g. 8192"),
+            (
+                "Context limit (tokens)",
+                &self.context_limit_editor,
+                "e.g. 131072",
+            ),
+            (
+                "Output limit (tokens)",
+                &self.output_limit_editor,
+                "e.g. 8192",
+            ),
         ];
         for (label, editor, placeholder) in fields {
             let placeholder = placeholder.to_string();
@@ -560,11 +629,13 @@ impl LocalProviderPageView {
                                     let profile_id = self.profile_id.clone();
                                     let model_id = model.clone();
                                     move |ctx, _, _| {
-                                        ctx.dispatch_typed_action(LocalProviderAction::ToggleModel {
-                                            profile_id: profile_id.clone(),
-                                            model_id: model_id.clone(),
-                                            enabled: !enabled,
-                                        })
+                                        ctx.dispatch_typed_action(
+                                            LocalProviderAction::ToggleModel {
+                                                profile_id: profile_id.clone(),
+                                                model_id: model_id.clone(),
+                                                enabled: !enabled,
+                                            },
+                                        )
                                     }
                                 })
                                 .finish(),
@@ -582,7 +653,11 @@ impl LocalProviderPageView {
         }
 
         // Authentication mode.
-        let auth_label = if self.use_api_key { "API key" } else { "No authentication" };
+        let auth_label = if self.use_api_key {
+            "API key"
+        } else {
+            "No authentication"
+        };
         column.add_child(
             Container::new(row(
                 ui_builder
@@ -590,10 +665,15 @@ impl LocalProviderPageView {
                     .build()
                     .finish(),
                 ui_builder
-                    .button(ButtonVariant::Secondary, self.auth_button_mouse_state.clone())
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.auth_button_mouse_state.clone(),
+                    )
                     .with_text_label("Switch".to_string())
                     .build()
-                    .on_click(|ctx, _, _| ctx.dispatch_typed_action(LocalProviderAction::ToggleAuthMode))
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(LocalProviderAction::ToggleAuthMode)
+                    })
                     .finish(),
             ))
             .with_margin_bottom(FIELD_MARGIN_BOTTOM)
@@ -620,6 +700,50 @@ impl LocalProviderPageView {
             );
         }
 
+        // Standalone-only usage surfaces. These persist through the native
+        // settings mechanism (not config.json) and default to shown.
+        let response_usage = *AISettings::as_ref(app).standalone_response_usage;
+        let context_meter = *AISettings::as_ref(app).standalone_context_meter;
+        column.add_child(
+            Container::new(row(
+                ui_builder
+                    .span("Per-response usage footer:")
+                    .build()
+                    .finish(),
+                ui_builder
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.response_usage_button_mouse_state.clone(),
+                    )
+                    .with_text_label((if response_usage { "Shown" } else { "Hidden" }).to_string())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(LocalProviderAction::ToggleResponseUsage)
+                    })
+                    .finish(),
+            ))
+            .with_margin_bottom(FIELD_MARGIN_BOTTOM)
+            .finish(),
+        );
+        column.add_child(
+            Container::new(row(
+                ui_builder.span("Context-window meter:").build().finish(),
+                ui_builder
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.context_meter_button_mouse_state.clone(),
+                    )
+                    .with_text_label((if context_meter { "Shown" } else { "Hidden" }).to_string())
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(LocalProviderAction::ToggleContextMeter)
+                    })
+                    .finish(),
+            ))
+            .with_margin_bottom(FIELD_MARGIN_BOTTOM)
+            .finish(),
+        );
+
         // Actions.
         let mut actions = Flex::row().with_main_axis_alignment(MainAxisAlignment::Start);
         actions.add_child(
@@ -641,7 +765,10 @@ impl LocalProviderPageView {
         actions.add_child(
             Container::new(
                 ui_builder
-                    .button(ButtonVariant::Secondary, self.test_button_mouse_state.clone())
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.test_button_mouse_state.clone(),
+                    )
                     .with_text_label(test_label.to_string())
                     .build()
                     .on_click(|ctx, _, _| ctx.dispatch_typed_action(LocalProviderAction::Test))
@@ -653,10 +780,15 @@ impl LocalProviderPageView {
         actions.add_child(
             Container::new(
                 ui_builder
-                    .button(ButtonVariant::Secondary, self.new_profile_button_mouse_state.clone())
+                    .button(
+                        ButtonVariant::Secondary,
+                        self.new_profile_button_mouse_state.clone(),
+                    )
                     .with_text_label("New profile".to_string())
                     .build()
-                    .on_click(|ctx, _, _| ctx.dispatch_typed_action(LocalProviderAction::NewProfile))
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(LocalProviderAction::NewProfile)
+                    })
                     .finish(),
             )
             .with_margin_right(8.)
@@ -664,7 +796,10 @@ impl LocalProviderPageView {
         );
         actions.add_child(
             ui_builder
-                .button(ButtonVariant::Secondary, self.delete_profile_button_mouse_state.clone())
+                .button(
+                    ButtonVariant::Secondary,
+                    self.delete_profile_button_mouse_state.clone(),
+                )
                 .with_text_label("Delete profile".to_string())
                 .build()
                 .on_click(|ctx, _, _| ctx.dispatch_typed_action(LocalProviderAction::DeleteProfile))
@@ -761,6 +896,7 @@ fn new_profile_template() -> ProviderProfile {
         reasoning: false,
         supports_image_input: false,
         headers: Default::default(),
+        pricing: Default::default(),
     }
 }
 
@@ -807,13 +943,15 @@ async fn probe_endpoint(url: String, api_key: Option<String>) -> Result<ProbeOut
                     .await
                     .ok()
                     .and_then(|body| {
-                        body.get("data").and_then(|data| data.as_array()).map(|models| {
-                            models
-                                .iter()
-                                .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
-                                .map(str::to_string)
-                                .collect::<Vec<_>>()
-                        })
+                        body.get("data")
+                            .and_then(|data| data.as_array())
+                            .map(|models| {
+                                models
+                                    .iter()
+                                    .filter_map(|model| model.get("id").and_then(|id| id.as_str()))
+                                    .map(str::to_string)
+                                    .collect::<Vec<_>>()
+                            })
                     })
                     .unwrap_or_default();
                 let shown = discovered.iter().take(8).cloned().collect::<Vec<_>>();
@@ -823,7 +961,10 @@ async fn probe_endpoint(url: String, api_key: Option<String>) -> Result<ProbeOut
                         "Endpoint reachable (HTTP {status}); {count} model(s) reported. Pick one in the Model id field."
                     ),
                 };
-                return Ok(ProbeOutcome { message, models: shown });
+                return Ok(ProbeOutcome {
+                    message,
+                    models: shown,
+                });
             }
             Err(format!(
                 "Endpoint answered HTTP {status}. Check the URL, the model id, and the credential."
@@ -849,7 +990,10 @@ impl TypedActionView for LocalProviderPageView {
                     }
                     self.set_status(
                         if preset.note.is_empty() {
-                            format!("Filled the {} preset; enter the API key and save.", preset.display_name)
+                            format!(
+                                "Filled the {} preset; enter the API key and save.",
+                                preset.display_name
+                            )
                         } else {
                             format!("{} — {}", preset.display_name, preset.note)
                         },
@@ -858,18 +1002,33 @@ impl TypedActionView for LocalProviderPageView {
                     ctx.notify();
                 }
             }
-            LocalProviderAction::ToggleModel { profile_id, model_id, enabled } => {
+            LocalProviderAction::ToggleModel {
+                profile_id,
+                model_id,
+                enabled,
+            } => {
                 match standalone::set_model_enabled(profile_id, model_id, *enabled) {
                     Ok(()) => {
                         if *enabled {
-                            self.disabled_models.borrow_mut().retain(|model| model != model_id);
+                            self.disabled_models
+                                .borrow_mut()
+                                .retain(|model| model != model_id);
                         } else if !self.disabled_models.borrow().contains(model_id) {
                             self.disabled_models.borrow_mut().push(model_id.clone());
                         }
-                        crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
-                            preferences.rebuild_standalone_llms(ctx);
-                        });
-                        self.set_status(format!("{model_id} is now {}.", if *enabled { "enabled" } else { "disabled" }), false);
+                        crate::ai::llms::LLMPreferences::handle(ctx).update(
+                            ctx,
+                            |preferences, ctx| {
+                                preferences.rebuild_standalone_llms(ctx);
+                            },
+                        );
+                        self.set_status(
+                            format!(
+                                "{model_id} is now {}.",
+                                if *enabled { "enabled" } else { "disabled" }
+                            ),
+                            false,
+                        );
                     }
                     Err(error) => self.set_status(error.to_string(), true),
                 }
@@ -881,6 +1040,26 @@ impl TypedActionView for LocalProviderPageView {
             }
             LocalProviderAction::ToggleAuthMode => {
                 self.use_api_key = !self.use_api_key;
+                ctx.notify();
+            }
+            LocalProviderAction::ToggleResponseUsage => {
+                let next = !*AISettings::as_ref(ctx).standalone_response_usage;
+                let result = AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    settings.standalone_response_usage.set_value(next, ctx)
+                });
+                if let Err(error) = result {
+                    self.set_status(format!("Could not save the setting: {error}"), true);
+                }
+                ctx.notify();
+            }
+            LocalProviderAction::ToggleContextMeter => {
+                let next = !*AISettings::as_ref(ctx).standalone_context_meter;
+                let result = AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    settings.standalone_context_meter.set_value(next, ctx)
+                });
+                if let Err(error) = result {
+                    self.set_status(format!("Could not save the setting: {error}"), true);
+                }
                 ctx.notify();
             }
             LocalProviderAction::Save => self.save(ctx),

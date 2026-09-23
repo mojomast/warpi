@@ -1781,3 +1781,69 @@ fn test_denylist_matches_multiline_commands() {
         });
     })
 }
+
+#[test]
+fn test_pi_shell_redirection_requires_confirmation() {
+    App::test((), |mut app| async move {
+        let PermissionsTestState {
+            convo_id,
+            permissions,
+            terminal_view_id,
+            profile_model,
+            ..
+        } = initialize_permissions_test(&mut app);
+
+        // The default (AgentDecides) is the setting the bypass was reported for.
+        profile_model.update(&mut app, |model, ctx| {
+            model.set_execute_commands(
+                model.active_profile(Some(terminal_view_id), ctx).id(),
+                &ActionPermission::AgentDecides,
+                ctx,
+            );
+        });
+
+        // A Pi shell call with a redirection, translated exactly as the
+        // standalone bridge translates it.
+        let spec = standalone_agent::protocol::ToolCallSpec {
+            tool_call_id: "call_pi".to_string(),
+            name: "workspace.shell".to_string(),
+            arguments: serde_json::json!({ "command": "echo x > ~/.bashrc" }),
+        };
+        let translated =
+            standalone_agent::warp_events::translate_tool_call(&spec).expect("Pi call translates");
+        let Some(warp_multi_agent_api::message::tool_call::Tool::RunShellCommand(shell)) =
+            translated.tool.as_ref()
+        else {
+            panic!("expected a RunShellCommand call");
+        };
+        assert!(
+            shell.is_risky,
+            "Pi must not claim `is_risky: false`; that shortcut skips the redirection gate"
+        );
+        // `From<RunShellCommand> for AIAgentActionType` maps the proto bool to
+        // `Some(bool)`, which is what the permission check receives.
+        let action_is_risky = Some(shell.is_risky);
+
+        permissions.read(&app, |model, ctx| {
+            let result = model.can_autoexecute_command(
+                &convo_id,
+                &shell.command,
+                EscapeChar::Backslash,
+                shell.is_read_only,
+                action_is_risky,
+                Some(terminal_view_id),
+                &test_scope(),
+                ctx,
+            );
+            assert!(
+                matches!(
+                    result,
+                    CommandExecutionPermission::Denied(
+                        CommandExecutionPermissionDeniedReason::ContainsRedirection
+                    )
+                ),
+                "a Pi redirection must require confirmation, got {result:?}"
+            );
+        });
+    })
+}

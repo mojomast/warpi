@@ -504,10 +504,10 @@ BEGIN
     BEGIN
         BLOCK "040904E4"
         BEGIN
-            VALUE "CompanyName",      "Denver Technologies, Inc\0"
+            VALUE "CompanyName",      "warpi contributors\0"
             VALUE "FileDescription",  "{app_name}\0"
             VALUE "FileVersion",      "{version}\0"
-            VALUE "LegalCopyright",   "© 2025, Denver Technologies, Inc\0"
+            VALUE "LegalCopyright",   "© 2026 warpi contributors. Warp is © 2020–2026 Denver Technologies, Inc.\0"
             VALUE "InternalName",     "\0"
             VALUE "OriginalFilename", "\0"
             VALUE "ProductName",      "Warp\0"

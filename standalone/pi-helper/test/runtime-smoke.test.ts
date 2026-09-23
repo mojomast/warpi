@@ -65,12 +65,21 @@ for (const apiKey of ["sk-fixture-key", undefined]) {
       const hello = await helper.waitFor((frame) => frame.kind === "hello.ok");
       assert.equal(hello.data?.helper_version, "0.1.0");
       const capabilities = hello.data?.capabilities as { brokered_tools: string[] };
-      assert.deepEqual(capabilities.brokered_tools.slice().sort(), ["bash", "edit", "glob", "grep", "read", "write"]);
+      assert.deepEqual(capabilities.brokered_tools.slice().sort(), [
+        "bash",
+        "bash_output",
+        "edit",
+        "glob",
+        "grep",
+        "read",
+        "write",
+      ]);
 
       helper.send("session.open", sessionConfig(provider.baseUrl, apiKey, helper.dataDir), identity());
       const opened = await helper.waitFor((frame) => frame.kind === "session.opened");
       assert.deepEqual((opened.data?.active_tools as string[]).slice().sort(), [
         "bash",
+        "bash_output",
         "edit",
         "glob",
         "grep",
@@ -196,6 +205,44 @@ test("provider error surfaces as turn.failed without retry storm", async () => {
     const failed = await helper.waitFor((frame) => frame.kind === "turn.failed");
     assert.ok(["provider_error", "internal_error"].includes(String(failed.data?.code)));
     assert.equal(provider.requestCount, 1, "no automatic retry when retry is disabled");
+  } finally {
+    await helper.dispose();
+    await provider.stop();
+  }
+});
+
+test("bash_output is brokered as a bounded read of a running command", async () => {
+  const provider = new FakeProvider([
+    {
+      kind: "tool_call",
+      toolCallId: "call_snapshot",
+      toolName: "bash_output",
+      argumentChunks: fragment(JSON.stringify({ command_id: "block-9", wait_seconds: 5 }), 7),
+    },
+    { kind: "text", chunks: ["checked"] },
+  ]);
+  await provider.start();
+  const helper = await HelperClient.start();
+  try {
+    helper.send("hello", {});
+    await helper.waitFor((frame) => frame.kind === "hello.ok");
+    helper.send("session.open", sessionConfig(provider.baseUrl, "sk-x", helper.dataDir), identity());
+    await helper.waitFor((frame) => frame.kind === "session.opened");
+    helper.send("turn.start", { prompt: "is it done yet?" }, identity());
+    const calls = await helper.waitFor((frame) => frame.kind === "tool.calls");
+    const callList = calls.data?.calls as Array<{ tool_call_id: string; name: string; arguments: unknown }>;
+    assert.equal(callList.length, 1);
+    assert.equal(callList[0].name, "workspace.read_shell_command_output");
+    assert.deepEqual(callList[0].arguments, { command_id: "block-9", wait_seconds: 5 });
+
+    helper.send(
+      "turn.resume",
+      { results: [{ tool_call_id: "call_snapshot", status: "error", content: "still running" }] },
+      identity(),
+    );
+    const completed = await helper.waitFor((frame) => frame.kind === "turn.completed");
+    assert.equal(completed.data?.stop_reason, "stop");
+    assert.equal(provider.requestCount, 2);
   } finally {
     await helper.dispose();
     await provider.stop();

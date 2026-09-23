@@ -10314,7 +10314,11 @@ impl TerminalView {
     /// remote server (the CTA to enable the SSH extension would be irrelevant otherwise)
     /// and the user has not permanently dismissed it via "Don't show me again".
     fn should_open_control_master_banner(&self, has_remote_server: bool) -> bool {
-        !has_remote_server && !self.control_master_error_banner_suppressed
+        // The banner's only remediation is enabling Warp's SSH extension, which
+        // the standalone backend does not have.
+        !crate::standalone_ui::hides_ssh_warpification()
+            && !has_remote_server
+            && !self.control_master_error_banner_suppressed
     }
 
     fn read_from_clipboard(
@@ -13526,6 +13530,11 @@ impl TerminalView {
         session_id: SessionId,
         ctx: &mut ViewContext<Self>,
     ) {
+        // The choice block advertises Warp's SSH extension, which is not
+        // available with the standalone backend.
+        if crate::standalone_ui::hides_ssh_warpification() {
+            return;
+        }
         let already_present = self.rich_content_views.iter().any(|view| {
             matches!(
                 view.metadata(),
@@ -13587,6 +13596,11 @@ impl TerminalView {
     /// and no failure banner is already shown for that session.
     fn show_remote_server_loading_footer(&self, model: &TerminalModel, app: &AppContext) -> bool {
         if !FeatureFlag::SshRemoteServer.is_enabled() {
+            return false;
+        }
+        // The remote-server flow is inert in standalone mode, so its progress
+        // footer must never appear.
+        if crate::standalone_ui::hides_ssh_warpification() {
             return false;
         }
         // Don't show the loading footer while the choice block is visible;
@@ -13662,6 +13676,11 @@ impl TerminalView {
         error: remote_server::transport::UserFacingError,
         ctx: &mut ViewContext<Self>,
     ) {
+        // The banner describes a Warp SSH extension failure; standalone
+        // sessions never use that extension.
+        if crate::standalone_ui::hides_ssh_warpification() {
+            return;
+        }
         let already_present = self.rich_content_views.iter().any(|view| {
             matches!(
                 view.metadata(),
@@ -13731,6 +13750,12 @@ impl TerminalView {
         session_id: SessionId,
         ctx: &mut ViewContext<Self>,
     ) {
+        // The banner points users at Warp's SSH extension, which the standalone
+        // backend cannot install. Leave the pending flag untouched so the
+        // notice can still appear if standalone mode is turned off later.
+        if crate::standalone_ui::hides_ssh_warpification() {
+            return;
+        }
         let already_present = self.rich_content_views.iter().any(|view| {
             matches!(
                 view.metadata(),

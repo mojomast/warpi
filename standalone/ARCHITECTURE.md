@@ -69,18 +69,24 @@ Warp request (results)     -> exchange E2 -> turn.resume  -> P continues
 Pi emits final text        -> deltas/message -> E2: Finished(Done), run settled
 ```
 
-A run that never requests tools settles inside E1. A rejected tool is a
-`turn.resume` with `status: rejected`; Pi receives it as a tool error and
-continues (or the user's next message supersedes the run). Prompts submitted while
-a run is live are queued rather than interrupting it (see "Prompt queueing and
-cancellation" below).
+A run that never requests tools settles inside E1. A rejected shell call now
+returns a definite result (`9cd8443`): standalone requests convert
+`CancelledBeforeExecution` into a `CommandFinished` with exit code `-1`, so the
+resume carries an error the model must handle instead of the old "run it again"
+synthetic. The bridge also has a deny registry that answers a still-pending
+denied call with `status: rejected` (`251da37`; see `SECURITY.md` for the
+end-to-end caveat). Prompts submitted while a run is live are queued rather than
+interrupting it (see "Prompt queueing and cancellation" below).
 
 ## Turn lifecycle guarantees
 
 Three invariants close the turn states that used to park a Pi run forever
-(implemented in `crates/standalone_agent`; the suites are
-`tests/tool_result_loss.rs`, `tests/untranslatable_calls.rs`, and
-`tests/cancel_settlement.rs`):
+(implemented in `crates/standalone_agent`; the stub-helper suites are
+`tests/tool_result_loss.rs`, `tests/untranslatable_calls.rs`,
+`tests/cancel_settlement.rs`, `tests/paused_turn_cancel.rs`,
+`tests/user_rejection.rs`, `tests/duplicate_and_reattach.rs`,
+`tests/session_reopen.rs`, `tests/compaction_watchdog.rs`, and
+`tests/transcript_repair.rs`):
 
 1. **Exactly one result per forwarded tool call.** `plan_resume` classifies every
    incoming result as accepted, already-delivered, or unknown. Accepted results
@@ -107,13 +113,24 @@ The watchdog bounds the other ways a turn can go quiet:
 | --- | --- | --- |
 | No helper event while the provider works | 120 s | `WARPI_TURN_STALL_TIMEOUT_SECS` |
 | Turn suspended on tool calls | 1800 s | `WARPI_PENDING_TOOL_TIMEOUT_SECS` (`0` = no deadline) |
+| Compaction running inside the turn | 600 s | `WARPI_COMPACTION_TIMEOUT_SECS` |
 | Helper has not acknowledged `turn.cancel` | 5 s | `WARPI_CANCEL_DEADLINE_SECS` |
 
 Expiry settles the attached exchange (`ProtocolError{timeout}`,
-`RunFailed{tool_timeout, retryable: true}`, or `RunCancelled`), drops the turn, and
-starts the next queued prompt. `WARPI_PENDING_TOOL_TIMEOUT_SECS=0` restores
-native Warp's unbounded approval wait, but it also removes the only automatic
-release for a paused standalone turn (see the queueing caveat below).
+`RunFailed{tool_timeout, retryable: true}`, `RunFailed{compaction_timeout,
+retryable: true}`, or `RunCancelled`), drops the turn, and starts the next queued
+prompt. Two caveats remain: a compaction that runs longer than its 600 s deadline
+is still cancelled with `compaction_timeout` (there is no heartbeat during
+compaction), and `WARPI_PENDING_TOOL_TIMEOUT_SECS=0` restores native Warp's
+unbounded approval wait for a card nobody answers — stop / send-now still cancel
+the turn (see below).
+
+Two related bounds landed with the same work: a malformed helper frame fails only
+the frame's session — its exchange is settled and its turn cancelled, and other
+sessions keep running (`251da37`; no dedicated malformed-frame test yet) — and app
+teardown calls `shutdown_all_blocking`, which is best-effort: it `try_lock`s each
+session and skips one whose lock is held, while the helper also exits on stdin EOF
+(`251da37`).
 
 ## Data flow inside `crates/standalone_agent`
 
@@ -159,19 +176,17 @@ release for a paused standalone turn (see the queueing caveat below).
   model of every configured profile, so the native picker lists all models from
   all profiles. Selecting a standalone model switches the active profile and the
   model id used when a helper session is next opened, and the list refreshes
-  immediately after a save or a toggle, without a restart. (The committed picker
-  also lists Warp's own model entries next to the standalone ones; a pending
-  change hides every cloud-only entry — models and settings sections — while
-  standalone mode is enabled. It is uncommitted as of 2026-09-23, so the final
-  picker contents are in flux; the GUI screenshot above shows the committed
-  behavior.)
-- **Open conversations keep their session** (known gap, 2026-09-23):
-  `run_exchange` opens the helper session only once per conversation and never
-  re-reads the profile while it is open, so a conversation that is already
-  running keeps the endpoint, model, key, and working directory it opened with —
-  for later turns too, not just the turn in flight. The model chip follows the
-  new selection while inference uses the old one. Reopening on a changed
-  (profile, model, key, cwd) fingerprint is planned; not implemented.
+  immediately after a save or a toggle, without a restart. While standalone mode
+  is on, the picker also hides Warp's own model entries and the cloud-only
+  settings sections/toolbar items (`standalone_ui::hidden_ui`, `251da37`); the
+  standalone models remain the whole list.
+- **Session reopen on change**: a fresh prompt reopens the helper session when
+  the `SessionFingerprint` changes — profile id, model id, base URL, working
+  directory, or a hash of the credential (`251da37`). A reopen is skipped while a
+  turn or a queued prompt is live, so that turn keeps the endpoint it started on;
+  the next fresh prompt retries the reopen. Remaining caveat: while the old turn
+  is still running, the model chip can show the new selection while inference
+  continues on the old endpoint.
 - **Per-model enable/disable**: the settings page lists every model of the
   active profile with a toggle. Disabled models are persisted in the profile's
   `disabled_models` and never appear in the picker. The model currently in use
@@ -199,14 +214,16 @@ queued instead of interrupting it:
   the queued-prompt panel header advertise the combination; the binding is enabled
   only in standalone mode and only while a sendable head row exists.
 
-**Known caveat (fix in progress, uncommitted as of 2026-09-23)**: when the turn is
-paused on an approval card or a command snapshot, the exchange that owns the
-cancel task has already closed, so stop / send-now cannot reach the helper. The
-queued prompt waits behind the parked turn until the pending-tool deadline expires
-it (30 minutes by default; indefinitely with `WARPI_PENDING_TOOL_TIMEOUT_SECS=0`)
-or the user answers the card. The bridge-side groundwork for a cancel signal and
-an orphan-event channel is in the working tree but is not committed, and the app
-does not wire it yet; treat this as pending.
+**Paused turns cancel too (landed 2026-09-23)**: stop and send-now no longer wait
+for the pending-tool deadline. When the turn is paused on an approval card or a
+command snapshot there is no live exchange stream to cancel, so the app calls the
+session-scoped `cancel_active_turn` (`bda8df4`), which sends `turn.cancel` for the
+running exchange; if the helper does not acknowledge, the cancel deadline (5 s)
+settles the turn and the queued prompt starts. A turn that dies while no stream is
+attached is published as a turn-death event so the app withdraws its approval
+cards and other work waiting on it (`251da37`). With those in place,
+`WARPI_PENDING_TOOL_TIMEOUT_SECS=0` only keeps native Warp's unbounded wait for a
+card the user never answers; the user can still stop the turn.
 
 `app/src/ai/standalone/mod.rs`:
 
@@ -220,10 +237,9 @@ does not wire it yet; treat this as pending.
   endpoint is reported as a local error.
 - One supervised helper session per conversation; the conversation → Pi session
   file mapping is persisted in `<data dir>/standalone/session-map.json`, and a
-  restart resumes the recorded session file. The map is written with an unguarded
-  read-modify-write, so two conversations opening their first session at the same
-  moment can lose an entry and silently restart on a fresh transcript (known gap,
-  2026-09-23).
+  restart resumes the recorded session file. Writes are guarded by a process-wide
+  lock and go through a temp-file rename, so concurrent first requests cannot lose
+  an entry (`251da37`).
 - `AISettings::is_any_ai_enabled` returns true when standalone mode is enabled,
   so a fresh profile can use agent mode without an account. Every other AI
   surface keeps its cloud gating, and signed-out cloud calls fail at the local
@@ -238,10 +254,14 @@ Backend → helper: `hello`, `session.open`, `turn.start`, `turn.resume`,
 `turn.cancel`, `session.compact`, `shutdown`.
 
 Helper → backend: `hello.ok`, `session.opened`, `turn.started`,
-`assistant.delta`, `assistant.message`, `assistant.reasoning`, `tool.calls`,
-`turn.awaiting_tools`, `turn.completed`, `turn.cancelling`, `turn.cancelled`,
-`turn.failed`, `compaction.started`, `compaction.finished`, `diagnostic`,
-`error`, `shutdown.ack`.
+`assistant.delta`, `assistant.message`, `assistant.reasoning`,
+`assistant.usage`, `context.updated`, `tool.calls`, `turn.awaiting_tools`,
+`turn.completed`, `turn.cancelling`, `turn.cancelled`, `turn.failed`,
+`compaction.started`, `compaction.finished`, `diagnostic`, `error`,
+`shutdown.ack`. The opt-in subagent prototype also defines
+`task.started`/`task.progress`/`task.completed`; the adapter does not decode them
+yet, and the prototype is disabled unless the helper is explicitly configured
+(`subagents.enabled` / `WARPI_SUBAGENTS`).
 
 Identity: `session_id` (Warp conversation), `generation` (session epoch),
 `turn_id` (one Pi prompt), `exchange_id` (one Warp request), `seq` (monotonic

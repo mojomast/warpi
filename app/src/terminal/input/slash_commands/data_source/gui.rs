@@ -22,8 +22,8 @@ use crate::search::SyncDataSource;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::slash_command_menu::StaticCommand;
-use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
+use crate::search::slash_command_menu::static_commands::{Availability, SlashCommandKind};
 use crate::settings::{
     InputSettings, InputSettingsChangedEvent, PrivacySettings, PrivacySettingsChangedEvent,
 };
@@ -249,6 +249,31 @@ impl GuiSlashCommandDataSource {
         availability: Availability,
         #[cfg(not(target_family = "wasm"))] ctx: &AppContext,
     ) -> bool {
+        // Account, billing, and cloud-agent commands have no backend to talk to
+        // when the standalone backend is active.
+        if crate::standalone_ui::hidden_ui()
+            && matches!(
+                command.kind,
+                SlashCommandKind::CloudAgent
+                    | SlashCommandKind::MoveToCloud
+                    | SlashCommandKind::RemoteControl
+                    | SlashCommandKind::Upgrade
+                    | SlashCommandKind::ManageBilling
+                    | SlashCommandKind::ConnectGrok
+                    | SlashCommandKind::ApiKeys
+                    | SlashCommandKind::CreateEnvironment
+                    | SlashCommandKind::Team
+                    | SlashCommandKind::Usage
+                    | SlashCommandKind::Cost
+                    | SlashCommandKind::Host
+                    | SlashCommandKind::Harness
+                    | SlashCommandKind::Environment
+                    | SlashCommandKind::Voice
+                    | SlashCommandKind::Index
+            )
+        {
+            return false;
+        }
         if command.name == commands::FORK.name
             && availability.contains(Availability::CLOUD_MODE_V2_COMPOSER)
         {

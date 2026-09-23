@@ -13,18 +13,28 @@
 //!   tool results to the exact suspended Pi tool call.
 //! - [`warp_events`] translates bridge events into the Warp multi-agent
 //!   protobuf the native controller already understands.
+//! - [`journal`] is the durable per-conversation prompt journal and recovery
+//!   planner.
+//! - [`event_log`] is the durable per-conversation event log behind the bridge's
+//!   delivery modes.
 //!
 //! Ownership split: Pi owns the model loop and the canonical transcript; Warp
 //! owns approvals and workspace execution; this crate owns only transcription
 //! between the two.
 
 pub mod bridge;
+pub mod event_log;
 pub mod helper;
+pub mod journal;
 pub mod protocol;
 pub mod provider;
 pub mod secrets;
+pub mod usage_ledger;
 pub mod warp_events;
 
-pub use bridge::{BridgeConfig, BridgeError, BridgeEvent, RetryOptions, SessionSpec, StandaloneBridge, TurnStream};
+pub use bridge::{
+    BridgeConfig, BridgeError, BridgeEvent, BridgeTimeouts, RetryOptions, SessionSpec,
+    StandaloneBridge, TurnStream,
+};
 pub use provider::{ChatCompletionsCompat, CredentialRef, ProviderProfile, WireProtocol};
 pub use secrets::{SecretStore, SecretString};

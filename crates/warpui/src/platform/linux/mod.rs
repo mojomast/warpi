@@ -16,6 +16,12 @@ pub trait AppBuilderExt {
     /// .desktop file and associated resources (like app icons).
     fn set_window_class(&mut self, window_class: String);
 
+    /// Sets the bundled PNG asset used as the application's window icon on X11.
+    ///
+    /// Wayland compositors ignore client-provided window icons; there the icon is
+    /// resolved from the `.desktop` file and the installed hicolor theme.
+    fn set_window_icon(&mut self, asset_path: &'static str);
+
     /// Whether or not to force the use of XWayland for users running Wayland.
     fn force_x11(&mut self, force_x11: bool);
 }
@@ -24,6 +30,13 @@ impl AppBuilderExt for super::AppBuilder {
     fn set_window_class(&mut self, window_class: String) {
         match self.as_inner_mut() {
             AppBackend::CurrentPlatform(app) => app.set_window_class(window_class),
+            AppBackend::Windowless(_) => (),
+        }
+    }
+
+    fn set_window_icon(&mut self, asset_path: &'static str) {
+        match self.as_inner_mut() {
+            AppBackend::CurrentPlatform(app) => app.set_window_icon_path(asset_path),
             AppBackend::Windowless(_) => (),
         }
     }

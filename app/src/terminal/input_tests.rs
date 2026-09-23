@@ -2483,6 +2483,56 @@ fn empty_buffer_enter_sends_top_queued_prompt_then_next_on_repeat() {
     });
 }
 
+/// The standalone send-now action fires the head queued row immediately (and
+/// leaves the rest of the queue intact), which is what the bound key combination
+/// does when the running turn cannot be steered.
+#[test]
+fn send_queued_prompt_now_action_fires_the_head_row() {
+    App::test((), |mut app| async move {
+        let _queue_flag = FeatureFlag::QueueSlashCommand.override_enabled(true);
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let terminal_view_id = terminal.read(&app, |view, _| view.id());
+        let conversation_id = seed_active_conversation(&mut app, terminal_view_id);
+        let input = terminal.read(&app, |view, _| view.input().clone());
+
+        QueuedQueryModel::handle(&app).update(&mut app, |model, ctx| {
+            model.append(
+                conversation_id,
+                QueuedQuery::new("first".to_owned(), QueuedQueryOrigin::QueueSlashCommand),
+                ctx,
+            );
+            model.append(
+                conversation_id,
+                QueuedQuery::new("second".to_owned(), QueuedQueryOrigin::QueueSlashCommand),
+                ctx,
+            );
+        });
+
+        let ai_query_count = Rc::new(RefCell::new(0));
+        let ai_query_count_for_subscription = ai_query_count.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event: &super::Event, _| {
+                if matches!(event, super::Event::ExecuteAIQuery) {
+                    *ai_query_count_for_subscription.borrow_mut() += 1;
+                }
+            });
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.handle_action(&InputAction::SendQueuedPromptNow, ctx);
+        });
+
+        assert_eq!(*ai_query_count.borrow(), 1);
+        QueuedQueryModel::handle(&app).read(&app, |model, _| {
+            let queue = model.queue(conversation_id);
+            assert_eq!(queue.len(), 1);
+            assert_eq!(queue[0].text(), "second");
+        });
+    });
+}
+
 /// With the input in (default) shell mode and an empty buffer, Enter executes the top queued
 /// command row instead of submitting an empty shell command.
 #[test]

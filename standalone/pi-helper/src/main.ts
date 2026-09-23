@@ -23,6 +23,7 @@ import {
   type RuntimeEvent,
 } from "./protocol.js";
 import { HELPER_VERSION, PiAgentRuntime, type TurnIdentity } from "./runtime.js";
+import { WORKSPACE_TOOL_NAMES } from "./workspace-tools.js";
 
 const REQUIRED_NODE_MAJOR = 22;
 const REQUIRED_NODE_MINOR = 19;
@@ -228,10 +229,13 @@ function main(): void {
             node_version: process.versions.node,
             capabilities: {
               protocol: PROTOCOL_VERSION,
-              brokered_tools: ["bash", "read", "write", "edit", "glob", "grep"],
+              brokered_tools: [...WORKSPACE_TOOL_NAMES],
               compaction: true,
               cancellation: true,
               context_files: true,
+              // Capability only: the `task` tool appears solely when a session
+              // opens with `subagents.enabled: true`.
+              subagents: true,
             },
           },
           undefined,

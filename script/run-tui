@@ -28,7 +28,7 @@ if command -v warp-channel-config &>/dev/null; then
     BIN="warp-tui"
     CHANNEL="local"
 else
-    BIN="warp-tui-oss"
+    BIN="warpi-tui"
     CHANNEL="oss"
 fi
 

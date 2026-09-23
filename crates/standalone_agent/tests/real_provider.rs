@@ -36,7 +36,8 @@ fn real_provider_config() -> Option<(String, String, String)> {
     }
     let base_url = std::env::var("WARPI_REAL_PROVIDER_BASE_URL")
         .unwrap_or_else(|_| "https://api.deepseek.com/v1".to_string());
-    let model = std::env::var("WARPI_REAL_PROVIDER_MODEL").unwrap_or_else(|_| "deepseek-chat".to_string());
+    let model =
+        std::env::var("WARPI_REAL_PROVIDER_MODEL").unwrap_or_else(|_| "deepseek-chat".to_string());
     Some((key, base_url, model))
 }
 
@@ -62,33 +63,37 @@ async fn real_provider_tool_round_trip() {
     profile.context_limit = 65536;
     profile.output_limit = 4096;
 
-    let mut bridge: StandaloneBridge = spawn_bridge_with_task(
-        dir.path(),
-        profile,
-        Some(key.as_str()),
-        "real-task",
-        true,
-    )
-    .await;
+    let mut bridge: StandaloneBridge =
+        spawn_bridge_with_task(dir.path(), profile, Some(key.as_str()), "real-task", true).await;
 
     let prompt = format!(
         "Use the bash tool to run exactly this command: echo {MARKER}\n\
          Then reply with a single line: RESULT=<the exact stdout of that command>"
     );
-    let mut stream = bridge.start_turn("conv-1", prompt).await.expect("turn starts");
+    let mut stream = bridge
+        .start_turn("conv-1", prompt)
+        .await
+        .expect("turn starts")
+        .stream;
     let paused = collect_until(&mut stream, TIMEOUT, |event| {
-        matches!(event, BridgeEvent::ExchangePaused { .. } | BridgeEvent::RunFailed { .. })
+        matches!(
+            event,
+            BridgeEvent::ExchangePaused { .. } | BridgeEvent::RunFailed { .. }
+        )
     })
     .await;
     if let Some(BridgeEvent::RunFailed { code, message, .. }) = paused.last() {
         panic!("provider failed before the tool call: {code}: {message}");
     }
     let calls = tool_calls(&paused);
-    assert_eq!(calls.len(), 1, "expected exactly one brokered tool call: {paused:?}");
-    assert_eq!(calls[0].name, "workspace.shell", "tool call: {:?}", calls[0]);
-    let command = calls[0].arguments["command"]
-        .as_str()
-        .expect("bash command argument");
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected exactly one brokered tool call: {paused:?}"
+    );
+    let command = shell_command(&calls[0])
+        .expect("the model call arrived as a translated shell command")
+        .to_string();
     assert!(
         command.contains(MARKER),
         "the model should echo the requested marker: {command}"
@@ -99,17 +104,28 @@ async fn real_provider_tool_round_trip() {
     let mut stream = bridge
         .resume_turn(
             "conv-1",
-            vec![tool_call(&calls[0].tool_call_id, HelperToolResultStatus::Success, &output)],
+            vec![tool_call(
+                &calls[0].tool_call_id,
+                HelperToolResultStatus::Success,
+                &output,
+            )],
         )
         .await
-        .expect("resume accepted");
+        .expect("resume accepted")
+        .stream;
     let settled = collect_until(&mut stream, TIMEOUT, |event| {
-        matches!(event, BridgeEvent::RunSettled { .. } | BridgeEvent::RunFailed { .. })
+        matches!(
+            event,
+            BridgeEvent::RunSettled { .. } | BridgeEvent::RunFailed { .. }
+        )
     })
     .await;
     match settled.last() {
         Some(BridgeEvent::RunSettled { usage, .. }) => {
-            assert!(usage.as_ref().is_some_and(|usage| usage.input_tokens > 0), "usage: {usage:?}");
+            assert!(
+                usage.as_ref().is_some_and(|usage| usage.input_tokens > 0),
+                "usage: {usage:?}"
+            );
         }
         other => panic!("provider round trip did not settle: {other:?}"),
     }
@@ -127,6 +143,7 @@ async fn real_provider_tool_round_trip() {
 
 /// Run the model-requested command locally, mirroring what Warp's approved
 /// shell executor does, and return its combined output.
+#[allow(clippy::disallowed_types)] // test-only helper: no console window exists under cargo test
 fn run_marker_command(command: &str) -> String {
     // Only the marker command is expected here; refuse anything else so this
     // test can never be turned into an arbitrary command executor.
@@ -142,7 +159,10 @@ fn run_marker_command(command: &str) -> String {
     let mut text = String::from_utf8_lossy(&output.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     if !output.status.success() {
-        text.push_str(&format!("\nexit code: {}", output.status.code().unwrap_or(-1)));
+        text.push_str(&format!(
+            "\nexit code: {}",
+            output.status.code().unwrap_or(-1)
+        ));
     }
     text
 }

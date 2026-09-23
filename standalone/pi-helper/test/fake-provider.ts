@@ -29,7 +29,8 @@ export interface ScriptedChunk {
 }
 
 export type ScriptStep =
-  | { kind: "text"; chunks: string[]; finishReason?: string }
+  /** `usage` is the raw OpenAI usage object for the final chunk; `false` omits the usage chunk. */
+  | { kind: "text"; chunks: string[]; finishReason?: string; usage?: Record<string, unknown> | false }
   | { kind: "tool_call"; toolCallId: string; toolName: string; argumentChunks: string[] }
   | { kind: "error"; status: number; body: string }
   | { kind: "truncate"; chunks: string[] };
@@ -134,7 +135,13 @@ export class FakeProvider {
         write({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
       }
       write({ ...base, choices: [{ index: 0, delta: {}, finish_reason: step.finishReason ?? "stop" }] });
-      write({ ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });
+      if (step.usage !== false) {
+        write({
+          ...base,
+          choices: [],
+          usage: step.usage ?? { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+        });
+      }
       response.write("data: [DONE]\n\n");
       response.end();
       return;

@@ -11,7 +11,8 @@ use crate::ai::agent::base_user_query::warp_client_origin;
 use crate::ai::agent::{
     AIAgentActionResult, AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentInput,
     BaseUserQuery, DriveObjectPayload, MCPContext, PassiveSuggestionResultType,
-    PassiveSuggestionTrigger, RunningCommand, StaticQueryType, Suggestions, UserQueryMode,
+    PassiveSuggestionTrigger, RequestCommandOutputResult, RunningCommand, StaticQueryType,
+    Suggestions, UserQueryMode,
 };
 use crate::ai::block_context::BlockContext;
 
@@ -55,7 +56,26 @@ impl TryFrom<StaticQueryType> for api::request::input::query_with_canned_respons
 }
 
 pub(super) fn convert_input(
+    inputs: Vec<AIAgentInput>,
+) -> Result<api::request::Input, ConvertToAPITypeError> {
+    convert_input_with_standalone(inputs, standalone_backend_active())
+}
+
+/// Whether this process serves requests through the standalone backend. The
+/// standalone module is native-only; wasm builds never have it.
+#[cfg(not(target_family = "wasm"))]
+fn standalone_backend_active() -> bool {
+    crate::ai::standalone::is_enabled()
+}
+
+#[cfg(target_family = "wasm")]
+fn standalone_backend_active() -> bool {
+    false
+}
+
+fn convert_input_with_standalone(
     mut inputs: Vec<AIAgentInput>,
+    standalone: bool,
 ) -> Result<api::request::Input, ConvertToAPITypeError> {
     if inputs.is_empty() {
         return Err(anyhow!("Attempted to send multi-agent request with no input").into());
@@ -257,7 +277,7 @@ pub(super) fn convert_input(
                     )),
                 });
             }
-            other_input => match convert_input_to_user_input(other_input) {
+            other_input => match convert_input_to_user_input(other_input, standalone) {
                 Ok(api_input) => api_inputs.push(api_input),
                 Err(ConvertToAPITypeError::Ignore) => (),
                 Err(e) => return Err(e),
@@ -266,7 +286,7 @@ pub(super) fn convert_input(
     }
 
     for input in inputs.into_iter() {
-        match convert_input_to_user_input(input) {
+        match convert_input_to_user_input(input, standalone) {
             Ok(api_input) => api_inputs.push(api_input),
             Err(ConvertToAPITypeError::Ignore) => continue,
             Err(e) => return Err(e),
@@ -336,8 +356,52 @@ fn attribution_fields(base: Option<&BaseUserQuery>) -> api::request::input::User
     fields
 }
 
+/// A shell action the user cancelled before it ran has no payload of its own;
+/// the generic conversion turns it into `Ignore`, which would drop the tool
+/// result from the request entirely. In standalone mode every bridge-emitted
+/// call must receive exactly one result, so synthesize the `CommandFinished`
+/// the executor would otherwise have produced. The exit code is `-1`, so the
+/// bridge renders it as a definite failure rather than a success.
+fn standalone_cancelled_command_result(
+    action_result: &AIAgentActionResult,
+) -> Option<api::request::input::user_inputs::user_input::Input> {
+    let AIAgentActionResultType::RequestCommandOutput(
+        RequestCommandOutputResult::CancelledBeforeExecution,
+    ) = &action_result.result
+    else {
+        return None;
+    };
+    Some(
+        api::request::input::user_inputs::user_input::Input::ToolCallResult(
+            api::request::input::ToolCallResult {
+                tool_call_id: action_result.id.clone().into(),
+                result: Some(
+                    api::request::input::tool_call_result::Result::RunShellCommand(
+                        #[allow(deprecated)]
+                        api::RunShellCommandResult {
+                            command: String::new(),
+                            output: String::new(),
+                            exit_code: 0,
+                            result: Some(api::run_shell_command_result::Result::CommandFinished(
+                                api::ShellCommandFinished {
+                                    command_id: String::new(),
+                                    output: "cancelled by Warp".to_string(),
+                                    exit_code: -1,
+                                    start_ts: None,
+                                    finish_ts: None,
+                                },
+                            )),
+                        },
+                    ),
+                ),
+            },
+        ),
+    )
+}
+
 fn convert_input_to_user_input(
     input: AIAgentInput,
+    standalone: bool,
 ) -> Result<api::request::input::user_inputs::user_input::Input, ConvertToAPITypeError> {
     match input {
         AIAgentInput::UserQuery {
@@ -400,7 +464,14 @@ fn convert_input_to_user_input(
                 }
             ))
         }
-        AIAgentInput::ActionResult { result, .. } => result.try_into(),
+        AIAgentInput::ActionResult { result, .. } => {
+            if standalone
+                && let Some(synthesized) = standalone_cancelled_command_result(&result)
+            {
+                return Ok(synthesized);
+            }
+            result.try_into()
+        }
         AIAgentInput::MessagesReceivedFromAgents { messages } => Ok(
             api::request::input::user_inputs::user_input::Input::MessagesReceivedFromAgents(
                 api::request::input::user_inputs::MessagesReceivedFromAgents {

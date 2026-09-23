@@ -17,8 +17,32 @@ import { Type, type Static, type TSchema } from "typebox";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { MAX_TOOL_ARGUMENT_BYTES, MAX_ID_LENGTH, truncateUtf8 } from "./protocol.js";
 
-export const WORKSPACE_TOOL_NAMES = ["bash", "read", "write", "edit", "glob", "grep"] as const;
+export const WORKSPACE_TOOL_NAMES = [
+  "bash",
+  "read",
+  "write",
+  "edit",
+  "glob",
+  "grep",
+  "bash_output",
+] as const;
 export type WorkspaceToolName = (typeof WORKSPACE_TOOL_NAMES)[number];
+
+/**
+ * Standing instructions appended to every standalone session's system prompt.
+ *
+ * The harness cannot enforce any of this: a command that reads stdin or never
+ * exits blocks the user's terminal until they stop it, so the model must avoid
+ * those commands in the first place. The same rules are present in the `bash`
+ * tool description, which is what Pi actually shows the model.
+ */
+export const STANDALONE_SYSTEM_GUIDANCE = [
+  "Shell commands run headless with no stdin.",
+  "Every command must be non-interactive and must terminate on its own.",
+  "Never start ssh without -o BatchMode=yes, vim, nano, top, less, more, REPLs, watch, `tail -f`, or anything else that waits for input or runs forever.",
+  "Bound commands yourself: pass -y/--batch/--yes/--no-pager, set connect timeouts (ssh -o BatchMode=yes -o ConnectTimeout=10), and wrap potentially long commands in an explicit timeout (timeout 60s <command>).",
+  "If a command is still running, use the bash_output tool with its command id to wait in bounded steps, or tell the user it is still running; do not start another command while it occupies the terminal.",
+].join(" ");
 
 export interface ToolCallSpec {
   tool_call_id: string;
@@ -35,6 +59,8 @@ export interface BrokerHost {
 
 interface PendingCall {
   ownerKey: string;
+  /** Child session id when the call came from a subagent; undefined for the parent. */
+  agentId: string | undefined;
   toolCallId: string;
   call: ToolCallSpec;
   resolve: (result: AgentToolResult<unknown>) => void;
@@ -42,6 +68,9 @@ interface PendingCall {
   cleanup: () => void;
   settled: boolean;
 }
+
+/** Bounded memory of settled call ids so late results can be dropped safely. */
+const SETTLED_ID_LIMIT = 512;
 
 const textResult = (text: string): AgentToolResult<unknown> => ({
   content: [{ type: "text", text }],
@@ -63,12 +92,15 @@ export function canonicalCall(name: WorkspaceToolName, args: Record<string, unkn
       return "workspace.glob";
     case "grep":
       return "workspace.grep";
+    case "bash_output":
+      return "workspace.read_shell_command_output";
   }
 }
 
 export class WorkspaceToolBroker {
   private readonly pending = new Map<string, PendingCall>();
   private readonly flushScheduled = new Set<string>();
+  private readonly settledIds = new Set<string>();
 
   constructor(private readonly host: BrokerHost) {}
 
@@ -78,6 +110,21 @@ export class WorkspaceToolBroker {
 
   pendingIdsFor(ownerKey: string): string[] {
     return [...this.pending.values()].filter((call) => call.ownerKey === ownerKey).map((call) => call.toolCallId);
+  }
+
+  pendingIdsForAgent(agentId: string): string[] {
+    return [...this.pending.values()]
+      .filter((call) => call.agentId === agentId)
+      .map((call) => call.toolCallId);
+  }
+
+  /**
+   * True when the call id was emitted and already settled (delivered or
+   * cancelled). Used to drop late results for abandoned child calls instead of
+   * failing the parent turn.
+   */
+  wasSettled(toolCallId: string): boolean {
+    return this.settledIds.has(toolCallId);
   }
 
   hasPendingFor(ownerKey: string): boolean {
@@ -97,6 +144,7 @@ export class WorkspaceToolBroker {
     name: WorkspaceToolName,
     args: Record<string, unknown>,
     signal: AbortSignal | undefined,
+    agentId?: string,
   ): Promise<AgentToolResult<unknown>> {
     if (typeof toolCallId !== "string" || toolCallId.length === 0 || toolCallId.length > MAX_ID_LENGTH) {
       throw new Error(`invalid tool call id from model: ${String(toolCallId)}`);
@@ -114,11 +162,13 @@ export class WorkspaceToolBroker {
     return new Promise<AgentToolResult<unknown>>((resolve, reject) => {
       const onAbort = () => {
         if (this.pending.delete(toolCallId)) {
+          this.rememberSettled(toolCallId);
           reject(new Error("Tool call aborted"));
         }
       };
       const entry: PendingCall = {
         ownerKey,
+        agentId,
         toolCallId,
         call,
         resolve: (result) => {
@@ -167,8 +217,9 @@ export class WorkspaceToolBroker {
     const call = this.pending.get(toolCallId);
     if (call === undefined || call.settled) return false;
     this.pending.delete(toolCallId);
+    this.rememberSettled(toolCallId);
     const { text, truncated } = truncateUtf8(content, 4 * 1024 * 1024);
-    const suffix = truncated ? "" : "";
+    const suffix = truncated ? "\n[truncated by helper: result exceeded the 4 MiB limit]" : "";
     if (isError) call.reject(new Error(`Tool call failed: ${text}${suffix}`));
     else call.resolve(textResult(text));
     return true;
@@ -180,6 +231,20 @@ export class WorkspaceToolBroker {
     for (const call of [...this.pending.values()]) {
       if (call.ownerKey !== ownerKey) continue;
       this.pending.delete(call.toolCallId);
+      this.rememberSettled(call.toolCallId);
+      call.reject(new Error(reason));
+      cancelled.push(call.toolCallId);
+    }
+    return cancelled;
+  }
+
+  /** Cancel every suspended call attributed to one child session. */
+  cancelAgent(agentId: string, reason: string): string[] {
+    const cancelled: string[] = [];
+    for (const call of [...this.pending.values()]) {
+      if (call.agentId !== agentId) continue;
+      this.pending.delete(call.toolCallId);
+      this.rememberSettled(call.toolCallId);
       call.reject(new Error(reason));
       cancelled.push(call.toolCallId);
     }
@@ -191,17 +256,41 @@ export class WorkspaceToolBroker {
     const call = this.pending.get(toolCallId);
     if (call === undefined) return false;
     this.pending.delete(toolCallId);
+    this.rememberSettled(toolCallId);
     call.reject(new Error(reason));
     return true;
+  }
+
+  private rememberSettled(toolCallId: string): void {
+    this.settledIds.add(toolCallId);
+    if (this.settledIds.size > SETTLED_ID_LIMIT) {
+      const oldest = this.settledIds.values().next().value;
+      if (oldest !== undefined) this.settledIds.delete(oldest);
+    }
   }
 }
 
 const shellSchema = Type.Object({
   command: Type.String({ description: "The shell command to execute." }),
   workdir: Type.Optional(Type.String({ description: "Working directory; defaults to the workspace root." })),
-  timeout_ms: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout in milliseconds." })),
   run_in_background: Type.Optional(
-    Type.Boolean({ description: "Run without waiting for completion; returns a command id in the result." }),
+    Type.Boolean({
+      description:
+        "Run without waiting for completion; the result is a snapshot with a command id. Commands still run in the user's terminal.",
+    }),
+  ),
+});
+
+const bashOutputSchema = Type.Object({
+  command_id: Type.String({
+    description: "The command id from a bash result that reported the command was still running.",
+  }),
+  wait_seconds: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 120,
+      description: "How long to wait for output or completion before returning a snapshot (default 30, maximum 120).",
+    }),
   ),
 });
 
@@ -240,10 +329,18 @@ export interface WorkspaceToolContext {
 }
 
 /**
- * Build the six brokered tools. `ownerKey` identifies the Pi session that owns
- * the calls, so results can never be delivered across sessions.
+ * Build the brokered workspace tools. `ownerKey` identifies the Pi session that
+ * owns the calls, so results can never be delivered across sessions. Child
+ * sessions share the parent's `ownerKey` (their calls must flow through the
+ * parent exchange) but tag every call with their own `agentId` so a child can
+ * be cancelled or metered without touching the parent's calls.
  */
-export function createWorkspaceTools(ownerKey: string, broker: WorkspaceToolBroker) {
+export function createWorkspaceTools(
+  ownerKey: string,
+  broker: WorkspaceToolBroker,
+  names: readonly WorkspaceToolName[] = WORKSPACE_TOOL_NAMES,
+  agentId?: string,
+) {
   const tool = <T extends TSchema>(name: WorkspaceToolName, description: string, parameters: T) => ({
     name,
     label: name,
@@ -255,15 +352,38 @@ export function createWorkspaceTools(ownerKey: string, broker: WorkspaceToolBrok
       args: Static<T>,
       signal: AbortSignal | undefined,
     ): Promise<AgentToolResult<unknown>> =>
-      broker.execute(ownerKey, toolCallId, name, args as Record<string, unknown>, signal),
+      broker.execute(ownerKey, toolCallId, name, args as Record<string, unknown>, signal, agentId),
   });
 
-  return [
-    tool("bash", "Execute a shell command in the user's workspace. Approval and execution are handled by Warp.", shellSchema),
-    tool("read", "Read a text file from the user's workspace.", readSchema),
-    tool("write", "Create or overwrite a file in the user's workspace.", writeSchema),
-    tool("edit", "Apply an exact-text edit to an existing file after review.", editSchema),
-    tool("glob", "List files in the workspace matching a glob pattern.", globSchema),
-    tool("grep", "Search file contents in the workspace with a regular expression.", grepSchema),
+  const bashDescription = [
+    "Execute a shell command in the user's workspace. Approval and execution are handled by Warp.",
+    "Commands run headless with no stdin: never start interactive programs (ssh without BatchMode, vim, nano, top, less, more, REPLs, watch, `tail -f`) and never run something that waits forever.",
+    "Put an explicit timeout inside the command itself (for example `timeout 60s <command>`); the harness does not enforce a timeout argument. Prefer non-interactive flags (-y/--batch/--yes/--no-pager, `ssh -o BatchMode=yes -o ConnectTimeout=10 host 'cmd'`).",
+    "If the result says the command is still running, it did not finish: use bash_output with the returned command id to wait in bounded steps, or keep working on something else. Do not start another command while it occupies the terminal.",
+  ].join(" ");
+
+  const bashOutputDescription = [
+    "Wait for a command that a previous bash call reported as still running.",
+    "Returns the finished output with its exit code, or a fresh snapshot after wait_seconds (default 30, maximum 120).",
+    "It never writes to the command and cannot stop it, so it cannot answer a prompt; use it only with a command id from a still-running result.",
+  ].join(" ");
+
+  const definitions: Array<[WorkspaceToolName, string, TSchema]> = [
+    ["bash", bashDescription, shellSchema],
+    ["bash_output", bashOutputDescription, bashOutputSchema],
+    ["read", "Read a text file from the user's workspace.", readSchema],
+    ["write", "Create or overwrite a file in the user's workspace.", writeSchema],
+    ["edit", "Apply an exact-text edit to an existing file after review.", editSchema],
+    ["glob", "List files in the workspace matching a glob pattern.", globSchema],
+    ["grep", "Search file contents in the workspace with a regular expression.", grepSchema],
   ];
+  const requested = new Set<WorkspaceToolName>(names);
+  for (const name of requested) {
+    if (!definitions.some(([defined]) => defined === name)) {
+      throw new Error(`unknown workspace tool requested: ${name}`);
+    }
+  }
+  return definitions
+    .filter(([name]) => requested.has(name))
+    .map(([name, description, parameters]) => tool(name, description, parameters));
 }

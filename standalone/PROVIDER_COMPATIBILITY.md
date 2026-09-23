@@ -67,15 +67,12 @@ steers the model away from them with the tool descriptions and a system-prompt
 addendum, because it cannot interrupt a command that already blocks the user's
 terminal.
 
-**`is_risky` status (2026-09-23)**: `translate_tool_call` currently emits
-`is_risky: false`, which makes Warp's `AgentDecides` path auto-execute the command
-before the redirection/allowlist gate runs. That is a gap against the intended
-model (Pi cannot classify risk, so it must not claim the not-risky shortcut); the
-intended value is `is_risky: true`, which routes every Pi shell call through the
-same denylist, redirection, allowlist, and read-only checks as a native call the
-model marked risky. A fix is in the working tree but not committed as of
-2026-09-23; until it lands, treat the redirection gate as not enforced for Pi
-shell calls (`SECURITY.md` has the same caveat).
+**`is_risky` status (landed 2026-09-23, `251da37`)**: `translate_tool_call`
+emits `is_risky: true`. Pi cannot classify a command's risk, so it must not claim
+the `is_risky == Some(false)` shortcut that lets `AgentDecides` auto-execute
+before the redirection/allowlist gate; with `true`, every Pi shell call goes
+through the same denylist, redirection, allowlist, and read-only checks as a
+native call the model marked risky (`SECURITY.md` has the same statement).
 
 Deferred (not offered in v1): file deletion, writing to or stopping a running
 command (`bash_write`/`bash_cancel`), background command management beyond

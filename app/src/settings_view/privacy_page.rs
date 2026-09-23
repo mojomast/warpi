@@ -1653,7 +1653,7 @@ impl SettingsWidget for CloudConversationStorageWidget {
     }
 
     fn should_render(&self, app: &AppContext) -> bool {
-        if !FeatureFlag::CloudConversations.is_enabled() {
+        if !FeatureFlag::CloudConversations.is_enabled() || crate::standalone_ui::hidden_ui() {
             return false;
         }
 

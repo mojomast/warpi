@@ -72,6 +72,7 @@ mod search_bar;
 mod server;
 mod session_management;
 mod shell_indicator;
+mod standalone_ui;
 mod suggestions;
 mod system;
 mod tab;
@@ -1189,6 +1190,11 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         let mut tracing_initialization = tracing_initialization.take();
         warpui::platform::AppCallbacks {
             on_will_terminate: Some(Box::new(move |ctx| {
+                // Standalone mode: ask the supervised Pi helpers to exit before
+                // the process goes away. Best-effort and synchronous; the
+                // helpers also exit on stdin EOF.
+                crate::ai::standalone::shutdown_all_blocking();
+
                 TelemetryCollector::handle(ctx).update(ctx, |telemetry_collector, ctx| {
                     telemetry_collector.flush_telemetry_events_for_shutdown(ctx);
                 });
@@ -1258,6 +1264,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         use crate::settings::ForceX11;
 
         app_builder.set_window_class(ChannelState::app_id().to_string());
+        app_builder.set_window_icon("bundled/png/warpi-icon.png");
 
         let force_x11 = ForceX11::read_from_preferences(prefs_for_public_settings)
             .unwrap_or(ForceX11::default_value());
@@ -2691,6 +2698,11 @@ pub(crate) fn app_callbacks(
             );
         })),
         on_will_terminate: Some(Box::new(move |ctx| {
+            // Standalone mode: ask the supervised Pi helpers to exit before the
+            // process goes away. Best-effort and synchronous; the helpers also
+            // exit on stdin EOF.
+            crate::ai::standalone::shutdown_all_blocking();
+
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {
                 // Notebooks are only saved periodically, so ensure that any pending changes have
                 // been sent to the writer thread before terminating.

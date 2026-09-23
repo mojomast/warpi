@@ -9,7 +9,8 @@ use crate::ai::agent::base_user_query::warp_client_origin;
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
     AIAgentActionResult, AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentInput,
-    BaseUserQuery, RunningCommand, TransferShellCommandControlToUserResult, UserQueryMode,
+    BaseUserQuery, RequestCommandOutputResult, RunningCommand,
+    TransferShellCommandControlToUserResult, UserQueryMode,
 };
 use crate::terminal::model::block::BlockId;
 
@@ -251,7 +252,7 @@ fn cli_user_query_input(
 
 fn converted_user_query(input: AIAgentInput) -> api::request::input::UserQuery {
     let Ok(api::request::input::user_inputs::user_input::Input::UserQuery(query)) =
-        super::convert_input_to_user_input(input)
+        super::convert_input_to_user_input(input, false)
     else {
         panic!("expected a user query input");
     };
@@ -260,7 +261,7 @@ fn converted_user_query(input: AIAgentInput) -> api::request::input::UserQuery {
 
 fn converted_cli_user_query(input: AIAgentInput) -> api::request::input::UserQuery {
     let Ok(api::request::input::user_inputs::user_input::Input::CliAgentUserQuery(cli)) =
-        super::convert_input_to_user_input(input)
+        super::convert_input_to_user_input(input, false)
     else {
         panic!("expected a CLI agent user query input");
     };
@@ -568,4 +569,61 @@ fn mcp_context_servers_carry_their_identity_alongside_the_installation_id() {
     for server in &proto.servers[2..] {
         assert!(server.identity.is_none(), "{}", server.name);
     }
+}
+
+#[test]
+fn standalone_converts_a_cancelled_shell_action_into_a_real_tool_result() {
+    let action_result = || AIAgentActionResult {
+        id: "call-1".to_string().into(),
+        task_id: TaskId::new("task-1".to_string()),
+        result: AIAgentActionResultType::RequestCommandOutput(
+            RequestCommandOutputResult::CancelledBeforeExecution,
+        ),
+    };
+    let action_input = |result| AIAgentInput::ActionResult {
+        result,
+        context: Arc::new([]),
+    };
+
+    // Without the standalone backend the result keeps today's behavior: the
+    // whole input is dropped (`Ignore`) and no tool result is sent.
+    let cloud = super::convert_input_with_standalone(vec![action_input(action_result())], false)
+        .expect("converts");
+    let Some(api::request::input::Type::UserInputs(user_inputs)) = cloud.r#type else {
+        panic!("expected user inputs");
+    };
+    assert!(
+        user_inputs.inputs.is_empty(),
+        "cloud requests must not synthesize results for cancelled actions"
+    );
+
+    // Standalone requests send a definite `CommandFinished` so the bridge and
+    // the Pi run receive a result instead of relying on compensation.
+    let standalone =
+        super::convert_input_with_standalone(vec![action_input(action_result())], true)
+            .expect("converts");
+    let Some(api::request::input::Type::UserInputs(user_inputs)) = standalone.r#type else {
+        panic!("expected user inputs");
+    };
+    assert_eq!(user_inputs.inputs.len(), 1);
+    let input = user_inputs
+        .inputs
+        .into_iter()
+        .next()
+        .and_then(|input| input.input)
+        .expect("one input");
+    let api::request::input::user_inputs::user_input::Input::ToolCallResult(result) = input else {
+        panic!("expected a tool call result");
+    };
+    assert_eq!(result.tool_call_id, "call-1");
+    let Some(api::request::input::tool_call_result::Result::RunShellCommand(shell)) = result.result
+    else {
+        panic!("expected a shell command result");
+    };
+    let Some(api::run_shell_command_result::Result::CommandFinished(finished)) = shell.result
+    else {
+        panic!("expected a finished command");
+    };
+    assert_eq!(finished.exit_code, -1);
+    assert_eq!(finished.output, "cancelled by Warp");
 }

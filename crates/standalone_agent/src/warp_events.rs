@@ -19,12 +19,20 @@ use warp_multi_agent_api as api;
 use crate::bridge::BridgeEvent;
 use crate::protocol::ToolCallSpec;
 
+/// Default bounded wait requested by a `bash_output` tool call.
+const DEFAULT_SHELL_OUTPUT_WAIT_SECONDS: i64 = 30;
+/// Hard cap for a single `bash_output` wait. Mirrors the executor's
+/// `MAX_AGENT_DELAY_DURATION`, which never waits longer than this for one poll.
+pub const MAX_SHELL_OUTPUT_WAIT_SECONDS: i64 = 120;
+
 /// Translate a model tool call (`workspace.*`) into a Warp tool call.
 ///
 /// Unknown tool names and invalid arguments fail closed: the caller converts
 /// the error into a tool-result error for the model and never executes a
 /// partial action.
-pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall, ToolTranslationError> {
+pub fn translate_tool_call(
+    spec: &ToolCallSpec,
+) -> Result<api::message::ToolCall, ToolTranslationError> {
     let args = &spec.arguments;
     let tool = match spec.name.as_str() {
         "workspace.shell" => {
@@ -35,7 +43,9 @@ pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             let full_command = match workdir {
-                Some(dir) if !dir.trim().is_empty() => format!("cd -- {} && {}", shell_quote(&dir), command),
+                Some(dir) if !dir.trim().is_empty() => {
+                    format!("cd -- {} && {}", shell_quote(&dir), command)
+                }
                 _ => command,
             };
             api::message::tool_call::Tool::RunShellCommand(api::message::tool_call::RunShellCommand {
@@ -43,12 +53,35 @@ pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall
                 is_read_only: false,
                 uses_pager: false,
                 citations: Vec::new(),
-                is_risky: false,
+                // Pi cannot classify a command's risk, so it must not claim the
+                // `is_risky == Some(false)` shortcut that lets AgentDecides
+                // auto-execute. Every Pi shell command goes through the same
+                // denylist/redirection/allowlist/read-only gates as a native
+                // command the model called risky.
+                is_risky: true,
                 wait_until_complete_value: Some(
                     api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(!background),
                 ),
                 risk_category: api::RiskCategory::NontrivialLocalChange as i32,
             })
+        }
+        "workspace.read_shell_command_output" => {
+            let command_id = string_arg(args, "command_id")?;
+            let wait_seconds = integer_arg(args, "wait_seconds")
+                .unwrap_or(DEFAULT_SHELL_OUTPUT_WAIT_SECONDS)
+                .clamp(1, MAX_SHELL_OUTPUT_WAIT_SECONDS);
+            let delay = api::message::tool_call::read_shell_command_output::Delay::Duration(
+                prost_types::Duration {
+                    seconds: wait_seconds,
+                    nanos: 0,
+                },
+            );
+            api::message::tool_call::Tool::ReadShellCommandOutput(
+                api::message::tool_call::ReadShellCommandOutput {
+                    command_id,
+                    delay: Some(delay),
+                },
+            )
         }
         "workspace.read_file" => {
             let path = string_arg(args, "path")?;
@@ -62,7 +95,10 @@ pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall
                 _ => Vec::new(),
             };
             api::message::tool_call::Tool::ReadFiles(api::message::tool_call::ReadFiles {
-                files: vec![api::message::tool_call::read_files::File { name: path, line_ranges }],
+                files: vec![api::message::tool_call::read_files::File {
+                    name: path,
+                    line_ranges,
+                }],
             })
         }
         "workspace.glob" => {
@@ -82,13 +118,19 @@ pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall
             // glob filters; inline the case-insensitivity as a regex flag and
             // reject the glob filter rather than silently ignoring it.
             if args.get("glob").is_some_and(|value| !value.is_null()) {
-                return Err(ToolTranslationError::UnsupportedArgument("glob".to_string()));
+                return Err(ToolTranslationError::UnsupportedArgument(
+                    "glob".to_string(),
+                ));
             }
             let ignore_case = args
                 .get("ignore_case")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            let query = if ignore_case { format!("(?i){pattern}") } else { pattern };
+            let query = if ignore_case {
+                format!("(?i){pattern}")
+            } else {
+                pattern
+            };
             api::message::tool_call::Tool::Grep(api::message::tool_call::Grep {
                 queries: vec![query],
                 path: optional_string_arg(args, "path").unwrap_or_default(),
@@ -130,7 +172,10 @@ pub fn translate_tool_call(spec: &ToolCallSpec) -> Result<api::message::ToolCall
         }
         other => return Err(ToolTranslationError::UnknownTool(other.to_string())),
     };
-    Ok(api::message::ToolCall { tool_call_id: spec.tool_call_id.clone(), tool: Some(tool) })
+    Ok(api::message::ToolCall {
+        tool_call_id: spec.tool_call_id.clone(),
+        tool: Some(tool),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -191,7 +236,10 @@ pub enum RenderedStatus {
 /// an explicit "no representable result" string instead of pretending success.
 pub fn render_tool_call_result(result: &api::message::ToolCallResult) -> (RenderedStatus, String) {
     let Some(payload) = result.result.as_ref() else {
-        return (RenderedStatus::Error, "tool returned no result payload".to_string());
+        return (
+            RenderedStatus::Error,
+            "tool returned no result payload".to_string(),
+        );
     };
     render_payload(Payload::from(payload))
 }
@@ -201,7 +249,10 @@ pub fn render_request_tool_call_result(
     result: &api::request::input::ToolCallResult,
 ) -> (RenderedStatus, String) {
     let Some(payload) = result.result.as_ref() else {
-        return (RenderedStatus::Error, "tool returned no result payload".to_string());
+        return (
+            RenderedStatus::Error,
+            "tool returned no result payload".to_string(),
+        );
     };
     render_payload(Payload::from(payload))
 }
@@ -209,6 +260,7 @@ pub fn render_request_tool_call_result(
 /// Borrowed view over the tool-result payloads the standalone bridge can render.
 enum Payload<'a> {
     Shell(&'a api::RunShellCommandResult),
+    ShellOutput(&'a api::ReadShellCommandOutputResult),
     Read(&'a api::ReadFilesResult),
     Diffs(&'a api::ApplyFileDiffsResult),
     Grep(&'a api::GrepResult),
@@ -222,6 +274,7 @@ impl<'a> From<&'a api::message::tool_call_result::Result> for Payload<'a> {
         use api::message::tool_call_result::Result as R;
         match value {
             R::RunShellCommand(shell) => Payload::Shell(shell),
+            R::ReadShellCommandOutput(output) => Payload::ShellOutput(output),
             R::ReadFiles(read) => Payload::Read(read),
             R::ApplyFileDiffs(diffs) => Payload::Diffs(diffs),
             R::Grep(grep) => Payload::Grep(grep),
@@ -238,6 +291,7 @@ impl<'a> From<&'a api::request::input::tool_call_result::Result> for Payload<'a>
         use api::request::input::tool_call_result::Result as R;
         match value {
             R::RunShellCommand(shell) => Payload::Shell(shell),
+            R::ReadShellCommandOutput(output) => Payload::ShellOutput(output),
             R::ReadFiles(read) => Payload::Read(read),
             R::ApplyFileDiffs(diffs) => Payload::Diffs(diffs),
             R::Grep(grep) => Payload::Grep(grep),
@@ -252,18 +306,23 @@ impl<'a> From<&'a api::request::input::tool_call_result::Result> for Payload<'a>
 fn render_payload(payload: Payload<'_>) -> (RenderedStatus, String) {
     match payload {
         Payload::Shell(shell) => render_shell_result(shell),
+        Payload::ShellOutput(output) => render_bash_output_result(output),
         Payload::Read(read) => render_read_result(read),
         Payload::Diffs(diffs) => render_diff_result(diffs),
         Payload::Grep(grep) => render_grep_result(grep),
         Payload::GlobV2(glob) => render_glob_result(glob),
         Payload::Glob(glob) => match glob.result.as_ref() {
-            Some(api::file_glob_result::Result::Success(success)) => {
-                (RenderedStatus::Success, bounded(&success.matched_files, 64 * 1024))
-            }
+            Some(api::file_glob_result::Result::Success(success)) => (
+                RenderedStatus::Success,
+                bounded(&success.matched_files, 64 * 1024),
+            ),
             Some(api::file_glob_result::Result::Error(error)) => {
                 (RenderedStatus::Error, bounded(&error.message, 8 * 1024))
             }
-            None => (RenderedStatus::Error, "file glob returned no result".to_string()),
+            None => (
+                RenderedStatus::Error,
+                "file glob returned no result".to_string(),
+            ),
         },
         Payload::Unsupported => (
             RenderedStatus::Error,
@@ -275,38 +334,136 @@ fn render_payload(payload: Payload<'_>) -> (RenderedStatus, String) {
 fn render_shell_result(shell: &api::RunShellCommandResult) -> (RenderedStatus, String) {
     use api::run_shell_command_result::Result as R;
     match shell.result.as_ref() {
-        Some(R::CommandFinished(finished)) => {
-            let mut text = String::new();
-            if !finished.output.is_empty() {
-                text.push_str(&bounded(&finished.output, 256 * 1024));
-            }
-            if !text.ends_with('\n') && !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&format!("exit code: {}", finished.exit_code));
-            if finished.exit_code == 0 {
-                (RenderedStatus::Success, text)
-            } else {
-                (RenderedStatus::Error, text)
-            }
-        }
+        Some(R::CommandFinished(finished)) => render_finished_command(finished),
         Some(R::PermissionDenied(denied)) => (
             RenderedStatus::Rejected,
             format!(
                 "The user did not permit this command (reason: {:?}).",
-                denied.reason.as_ref().map_or_else(|| "unspecified".to_string(), |reason| format!("{reason:?}"))
+                denied
+                    .reason
+                    .as_ref()
+                    .map_or_else(|| "unspecified".to_string(), |reason| format!("{reason:?}"))
             ),
         ),
-        Some(R::LongRunningCommandSnapshot(snapshot)) => (
-            RenderedStatus::Success,
-            format!(
-                "Command is still running (command_id: {}).\n{}",
-                snapshot.command_id,
-                bounded(&snapshot.output, 64 * 1024)
-            ),
+        Some(R::LongRunningCommandSnapshot(snapshot)) => {
+            long_running_command_result(snapshot, LongRunningWait::Initial)
+        }
+        None => (
+            RenderedStatus::Error,
+            "shell command returned no result".to_string(),
         ),
-        None => (RenderedStatus::Error, "shell command returned no result".to_string()),
     }
+}
+
+fn render_bash_output_result(
+    output: &api::ReadShellCommandOutputResult,
+) -> (RenderedStatus, String) {
+    use api::read_shell_command_output_result::Result as R;
+    match output.result.as_ref() {
+        Some(R::CommandFinished(finished)) => render_finished_command(finished),
+        Some(R::LongRunningCommandSnapshot(snapshot)) => {
+            long_running_command_result(snapshot, LongRunningWait::Polled)
+        }
+        Some(R::Error(_)) => (
+            RenderedStatus::Error,
+            concat!(
+                "No running command matches that command id; it likely finished or was stopped ",
+                "by the user. Start a new command only if the previous work is no longer needed."
+            )
+            .to_string(),
+        ),
+        None => (
+            RenderedStatus::Error,
+            "shell command output returned no result".to_string(),
+        ),
+    }
+}
+
+fn render_finished_command(finished: &api::ShellCommandFinished) -> (RenderedStatus, String) {
+    let mut text = String::new();
+    if !finished.output.is_empty() {
+        text.push_str(&bounded(&finished.output, 256 * 1024));
+    }
+    if !text.ends_with('\n') && !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&format!("exit code: {}", finished.exit_code));
+    if finished.exit_code == 0 {
+        (RenderedStatus::Success, text)
+    } else {
+        (RenderedStatus::Error, text)
+    }
+}
+
+/// What ended the wait that produced a long-running snapshot.
+enum LongRunningWait {
+    /// The initial `RunShellCommand` wait ended before the command finished.
+    Initial,
+    /// A follow-up `ReadShellCommandOutput` wait ended before the command finished.
+    Polled,
+}
+
+/// A command that is still running is never presented as a successful tool
+/// result. The model gets the partial output plus explicit next steps, because
+/// the alternative (a success-looking snapshot) makes it start new commands or
+/// wait forever behind a command that may never return.
+///
+/// The `bash_output` name in the guidance mirrors the helper tool in
+/// `standalone/pi-helper/src/workspace-tools.ts`, which emits
+/// `workspace.read_shell_command_output`.
+fn long_running_command_result(
+    snapshot: &api::LongRunningShellCommandSnapshot,
+    wait: LongRunningWait,
+) -> (RenderedStatus, String) {
+    let lead = match wait {
+        LongRunningWait::Initial => concat!(
+            "Command did not finish: it is still running when the harness stopped waiting, ",
+            "so this result is not a success and the exit code is unknown."
+        ),
+        LongRunningWait::Polled => concat!(
+            "Command did not finish within the requested wait, so this result is not a ",
+            "success and the exit code is unknown."
+        ),
+    };
+    let mut text = String::new();
+    text.push_str(lead);
+    text.push('\n');
+    text.push_str(&format!(
+        concat!(
+            "It is still running in the user's terminal (command_id: {}); do not start ",
+            "another command while it occupies the terminal.\n"
+        ),
+        snapshot.command_id
+    ));
+    text.push_str(concat!(
+        "Commands run headless without stdin: never start interactive programs (ssh without ",
+        "BatchMode, vim, nano, top, less, more, REPLs, watch, `tail -f`). Retry ",
+        "non-interactively instead: pass -y/--batch/--yes/--no-pager, use ",
+        "`ssh -o BatchMode=yes -o ConnectTimeout=10 host 'command'`, and bound the command ",
+        "itself with an explicit timeout such as `timeout 60s command`.\n"
+    ));
+    text.push_str(&format!(
+        concat!(
+            "To keep waiting for this command, call the bash_output tool with command_id ",
+            "\"{}\" and a bounded wait_seconds (1-{}); otherwise continue with other work or ",
+            "ask the user to stop it.\n"
+        ),
+        snapshot.command_id, MAX_SHELL_OUTPUT_WAIT_SECONDS
+    ));
+    if snapshot.is_alt_screen_active {
+        text.push_str(concat!(
+            "The command is using the terminal's alternate screen (a full-screen program), ",
+            "so it will not return on its own.\n"
+        ));
+    }
+    if !snapshot.output.is_empty() {
+        text.push_str("--- partial output (not final) ---\n");
+        text.push_str(&bounded(&snapshot.output, 64 * 1024));
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+    (RenderedStatus::Error, text)
 }
 
 fn render_read_result(read: &api::ReadFilesResult) -> (RenderedStatus, String) {
@@ -320,7 +477,10 @@ fn render_read_result(read: &api::ReadFilesResult) -> (RenderedStatus, String) {
                 text.push('\n');
             }
             for failed in &success.failed_reads {
-                text.push_str(&format!("--- {} (failed) ---\n{}\n", failed.path, failed.message));
+                text.push_str(&format!(
+                    "--- {} (failed) ---\n{}\n",
+                    failed.path, failed.message
+                ));
             }
             if text.is_empty() {
                 return (RenderedStatus::Error, "no files were read".to_string());
@@ -331,14 +491,23 @@ fn render_read_result(read: &api::ReadFilesResult) -> (RenderedStatus, String) {
             let mut text = String::new();
             for file in &success.files {
                 let path = match file.content.as_ref() {
-                    Some(api::any_file_content::Content::TextContent(text_content)) => text_content.file_path.clone(),
-                    Some(api::any_file_content::Content::BinaryContent(binary)) => binary.file_path.clone(),
+                    Some(api::any_file_content::Content::TextContent(text_content)) => {
+                        text_content.file_path.clone()
+                    }
+                    Some(api::any_file_content::Content::BinaryContent(binary)) => {
+                        binary.file_path.clone()
+                    }
                     None => "unknown".to_string(),
                 };
-                text.push_str(&format!("--- {path} ---\n(binary or non-UTF8 content omitted)\n"));
+                text.push_str(&format!(
+                    "--- {path} ---\n(binary or non-UTF8 content omitted)\n"
+                ));
             }
             for failed in &success.failed_reads {
-                text.push_str(&format!("--- {} (failed) ---\n{}\n", failed.path, failed.message));
+                text.push_str(&format!(
+                    "--- {} (failed) ---\n{}\n",
+                    failed.path, failed.message
+                ));
             }
             (RenderedStatus::Success, text)
         }
@@ -370,7 +539,10 @@ fn render_diff_result(diffs: &api::ApplyFileDiffsResult) -> (RenderedStatus, Str
             (RenderedStatus::Success, text)
         }
         Some(R::Error(error)) => (RenderedStatus::Error, error.message.clone()),
-        None => (RenderedStatus::Error, "file edit returned no result".to_string()),
+        None => (
+            RenderedStatus::Error,
+            "file edit returned no result".to_string(),
+        ),
     }
 }
 
@@ -416,7 +588,10 @@ fn render_glob_result(glob: &api::FileGlobV2Result) -> (RenderedStatus, String) 
             (RenderedStatus::Success, bounded(&text, 64 * 1024))
         }
         Some(R::Error(error)) => (RenderedStatus::Error, error.message.clone()),
-        None => (RenderedStatus::Error, "file glob returned no result".to_string()),
+        None => (
+            RenderedStatus::Error,
+            "file glob returned no result".to_string(),
+        ),
     }
 }
 
@@ -428,7 +603,10 @@ fn bounded(value: &str, max_bytes: usize) -> String {
     while end > 0 && !value.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}\n[truncated by standalone backend at {max_bytes} bytes]", &value[..end])
+    format!(
+        "{}\n[truncated by standalone backend at {max_bytes} bytes]",
+        &value[..end]
+    )
 }
 
 /// Pieces of a Warp request the standalone backend consumes.
@@ -493,14 +671,22 @@ pub fn extract_request_inputs(request: &api::Request) -> Result<RequestInputs, R
                             inputs.user_query = Some(query.query.clone());
                         }
                     }
-                    Some(api::request::input::user_inputs::user_input::Input::ToolCallResult(result)) => {
+                    Some(api::request::input::user_inputs::user_input::Input::ToolCallResult(
+                        result,
+                    )) => {
                         let (status, text) = render_request_tool_call_result(result);
                         inputs.tool_results.push(RenderedToolResult {
                             tool_call_id: result.tool_call_id.clone(),
                             status: match status {
-                                RenderedStatus::Success => crate::protocol::HelperToolResultStatus::Success,
-                                RenderedStatus::Rejected => crate::protocol::HelperToolResultStatus::Rejected,
-                                RenderedStatus::Error => crate::protocol::HelperToolResultStatus::Error,
+                                RenderedStatus::Success => {
+                                    crate::protocol::HelperToolResultStatus::Success
+                                }
+                                RenderedStatus::Rejected => {
+                                    crate::protocol::HelperToolResultStatus::Rejected
+                                }
+                                RenderedStatus::Error => {
+                                    crate::protocol::HelperToolResultStatus::Error
+                                }
                             },
                             text,
                         });
@@ -533,7 +719,12 @@ pub struct ExchangeWriter {
 }
 
 impl ExchangeWriter {
-    pub fn new(task_id: String, inputs: &RequestInputs, request_id: String, run_id: String) -> Self {
+    pub fn new(
+        task_id: String,
+        inputs: &RequestInputs,
+        request_id: String,
+        run_id: String,
+    ) -> Self {
         Self {
             task_id,
             conversation_id: inputs.conversation_id.clone(),
@@ -556,11 +747,13 @@ impl ExchangeWriter {
 
     pub fn init_event(&self) -> api::ResponseEvent {
         api::ResponseEvent {
-            r#type: Some(api::response_event::Type::Init(api::response_event::StreamInit {
-                conversation_id: self.conversation_id.clone(),
-                request_id: self.request_id.clone(),
-                run_id: self.run_id.clone(),
-            })),
+            r#type: Some(api::response_event::Type::Init(
+                api::response_event::StreamInit {
+                    conversation_id: self.conversation_id.clone(),
+                    request_id: self.request_id.clone(),
+                    run_id: self.run_id.clone(),
+                },
+            )),
         }
     }
 
@@ -574,13 +767,18 @@ impl ExchangeWriter {
                     return Vec::new();
                 }
                 self.create_task_sent = true;
-                vec![client_actions(vec![api::client_action::Action::CreateTask(
-                    api::client_action::CreateTask {
-                        task: Some(api::Task { id: task_id.clone(), ..Default::default() }),
-                    },
-                )])]
+                vec![client_actions(vec![
+                    api::client_action::Action::CreateTask(api::client_action::CreateTask {
+                        task: Some(api::Task {
+                            id: task_id.clone(),
+                            ..Default::default()
+                        }),
+                    }),
+                ])]
             }
-            BridgeEvent::TextDelta { message_id, delta } => self.write_text_delta(message_id, delta),
+            BridgeEvent::TextDelta { message_id, delta } => {
+                self.write_text_delta(message_id, delta)
+            }
             BridgeEvent::TextMessage { message_id, text } => {
                 if self.created_messages.contains_key(message_id) {
                     // Streaming already delivered this text; nothing to add.
@@ -589,40 +787,73 @@ impl ExchangeWriter {
                 self.write_text_delta(message_id, text)
             }
             BridgeEvent::ToolCalls { calls } => {
+                // The bridge partitions and translates before forwarding; an
+                // untranslatable call is answered as a tool result instead of
+                // being rendered as a client-less `Tool::Server` call.
                 let messages = calls
                     .iter()
-                    .filter_map(|call| match translate_tool_call(call) {
-                        Ok(tool_call) => Some(message_with_tool_call(&self.task_id, call.tool_call_id.clone(), tool_call)),
-                        Err(error) => Some(message_with_tool_call(
+                    .map(|call| {
+                        debug_assert!(
+                            !matches!(call.tool, Some(api::message::tool_call::Tool::Server(_))),
+                            "the bridge must answer untranslatable calls itself"
+                        );
+                        message_with_tool_call(
                             &self.task_id,
                             call.tool_call_id.clone(),
-                            api::message::ToolCall {
-                                tool_call_id: call.tool_call_id.clone(),
-                                tool: Some(api::message::tool_call::Tool::Server(
-                                    api::message::tool_call::Server {
-                                        payload: format!("unsupported_tool_call: {error}"),
-                                    },
-                                )),
-                            },
-                        )),
+                            call.clone(),
+                        )
                     })
                     .collect::<Vec<_>>();
-                vec![client_actions(vec![api::client_action::Action::AddMessagesToTask(
-                    api::client_action::AddMessagesToTask {
-                        task_id: self.task_id.clone(),
-                        messages,
-                    },
-                )])]
+                vec![client_actions(vec![
+                    api::client_action::Action::AddMessagesToTask(
+                        api::client_action::AddMessagesToTask {
+                            task_id: self.task_id.clone(),
+                            messages,
+                        },
+                    ),
+                ])]
             }
-            BridgeEvent::ExchangePaused { .. } => vec![self.finished(api::response_event::stream_finished::Reason::Done(
-                api::response_event::stream_finished::Done {},
-            ))],
-            BridgeEvent::RunSettled { .. } => vec![self.finished(api::response_event::stream_finished::Reason::Done(
-                api::response_event::stream_finished::Done {},
-            ))],
-            BridgeEvent::RunCancelled { .. } => Vec::new(),
-            BridgeEvent::RunFailed { code, message, .. } => vec![self.finished(failure_reason(code, message))],
-            BridgeEvent::ProtocolError { code, message } => vec![self.finished(failure_reason(code, message))],
+            BridgeEvent::ExchangePaused { .. } => {
+                vec![
+                    self.finished(api::response_event::stream_finished::Reason::Done(
+                        api::response_event::stream_finished::Done {},
+                    )),
+                ]
+            }
+            BridgeEvent::RunSettled { .. } => {
+                vec![
+                    self.finished(api::response_event::stream_finished::Reason::Done(
+                        api::response_event::stream_finished::Done {},
+                    )),
+                ]
+            }
+            // Usage and context facts feed the app-side accumulation and the
+            // local ledger; the native `RequestMetadata`/`StreamFinished`
+            // mapping lands with the standalone usage surfaces.
+            BridgeEvent::MessageUsage { .. }
+            | BridgeEvent::ContextUpdated { .. }
+            | BridgeEvent::CompactionFinished { .. } => Vec::new(),
+            // Subagent task facts feed diagnostics and the local ledger; the
+            // native task/tool-card mapping lands with the subagent UI work.
+            BridgeEvent::TaskStarted { .. }
+            | BridgeEvent::TaskProgress { .. }
+            | BridgeEvent::TaskCompleted { .. } => Vec::new(),
+            // The proto has no `Cancelled` finish reason; a client-side cancel
+            // is not observable to Warp. `Done` at least ends the exchange
+            // deterministically instead of synthesizing `UnexpectedEof`.
+            BridgeEvent::RunCancelled { .. } => {
+                vec![
+                    self.finished(api::response_event::stream_finished::Reason::Done(
+                        api::response_event::stream_finished::Done {},
+                    )),
+                ]
+            }
+            BridgeEvent::RunFailed { code, message, .. } => {
+                vec![self.finished(failure_reason(code, message))]
+            }
+            BridgeEvent::ProtocolError { code, message } => {
+                vec![self.finished(failure_reason(code, message))]
+            }
             BridgeEvent::Diagnostic { .. } => Vec::new(),
         }
     }
@@ -636,17 +867,23 @@ impl ExchangeWriter {
             let message = api::Message {
                 id: message_id.to_string(),
                 task_id: self.task_id.clone(),
-                message: Some(api::message::Message::AgentOutput(api::message::AgentOutput {
-                    text: delta.to_string(),
-                })),
+                message: Some(api::message::Message::AgentOutput(
+                    api::message::AgentOutput {
+                        text: delta.to_string(),
+                    },
+                )),
                 ..Default::default()
             };
             return vec![client_actions(vec![
-                api::client_action::Action::AppendToMessageContent(api::client_action::AppendToMessageContent {
-                    task_id: self.task_id.clone(),
-                    message: Some(message),
-                    mask: Some(prost_types::FieldMask { paths: vec!["agent_output.text".to_string()] }),
-                }),
+                api::client_action::Action::AppendToMessageContent(
+                    api::client_action::AppendToMessageContent {
+                        task_id: self.task_id.clone(),
+                        message: Some(message),
+                        mask: Some(prost_types::FieldMask {
+                            paths: vec!["agent_output.text".to_string()],
+                        }),
+                    },
+                ),
             ])];
         }
         self.created_messages.insert(message_id.to_string(), true);
@@ -656,14 +893,19 @@ impl ExchangeWriter {
             task_id: self.task_id.clone(),
             request_id: self.request_id.clone(),
             timestamp: Some(now()),
-            message: Some(api::message::Message::AgentOutput(api::message::AgentOutput {
-                text: delta.to_string(),
-            })),
+            message: Some(api::message::Message::AgentOutput(
+                api::message::AgentOutput {
+                    text: delta.to_string(),
+                },
+            )),
             ..Default::default()
         };
-        vec![client_actions(vec![api::client_action::Action::AddMessagesToTask(
-            api::client_action::AddMessagesToTask { task_id: self.task_id.clone(), messages: vec![message] },
-        )])]
+        vec![client_actions(vec![
+            api::client_action::Action::AddMessagesToTask(api::client_action::AddMessagesToTask {
+                task_id: self.task_id.clone(),
+                messages: vec![message],
+            }),
+        ])]
     }
 
     /// Synthesize a final text message for a message that never streamed
@@ -679,25 +921,24 @@ impl ExchangeWriter {
 
     fn finished(&self, reason: api::response_event::stream_finished::Reason) -> api::ResponseEvent {
         api::ResponseEvent {
-            r#type: Some(api::response_event::Type::Finished(api::response_event::StreamFinished {
-                reason: Some(reason),
-                token_usage: Vec::new(),
-                should_refresh_model_config: false,
-                #[allow(deprecated)]
-                request_cost: None,
-                conversation_usage_metadata: None,
-                request_charges: None,
-            })),
+            r#type: Some(api::response_event::Type::Finished(
+                api::response_event::StreamFinished {
+                    reason: Some(reason),
+                    token_usage: Vec::new(),
+                    should_refresh_model_config: false,
+                    #[allow(deprecated)]
+                    request_cost: None,
+                    conversation_usage_metadata: None,
+                    request_charges: None,
+                },
+            )),
         }
     }
 }
 
 /// Map a bridge failure onto a Warp finish reason so the UI shows the right
 /// error class instead of a generic failure.
-pub fn failure_reason(
-    code: &str,
-    message: &str,
-) -> api::response_event::stream_finished::Reason {
+pub fn failure_reason(code: &str, message: &str) -> api::response_event::stream_finished::Reason {
     use api::response_event::stream_finished as finished;
     match code {
         "invalid_api_key" | "auth" | "authentication_error" => {
@@ -712,22 +953,32 @@ pub fn failure_reason(
         "provider_error" | "llm_unavailable" | "timeout" => {
             finished::Reason::LlmUnavailable(finished::LlmUnavailable {})
         }
-        _ => finished::Reason::InternalError(finished::InternalError { message: message.to_string() }),
+        _ => finished::Reason::InternalError(finished::InternalError {
+            message: message.to_string(),
+        }),
     }
 }
 
 fn client_actions(actions: Vec<api::client_action::Action>) -> api::ResponseEvent {
     api::ResponseEvent {
-        r#type: Some(api::response_event::Type::ClientActions(api::response_event::ClientActions {
-            actions: actions
-                .into_iter()
-                .map(|action| api::ClientAction { action: Some(action) })
-                .collect(),
-        })),
+        r#type: Some(api::response_event::Type::ClientActions(
+            api::response_event::ClientActions {
+                actions: actions
+                    .into_iter()
+                    .map(|action| api::ClientAction {
+                        action: Some(action),
+                    })
+                    .collect(),
+            },
+        )),
     }
 }
 
-fn message_with_tool_call(task_id: &str, message_id: String, tool_call: api::message::ToolCall) -> api::Message {
+fn message_with_tool_call(
+    task_id: &str,
+    message_id: String,
+    tool_call: api::message::ToolCall,
+) -> api::Message {
     api::Message {
         id: message_id,
         task_id: task_id.to_string(),
@@ -741,12 +992,18 @@ fn now() -> Timestamp {
     let since_epoch = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    Timestamp { seconds: since_epoch.as_secs() as i64, nanos: since_epoch.subsec_nanos() as i32 }
+    Timestamp {
+        seconds: since_epoch.as_secs() as i64,
+        nanos: since_epoch.subsec_nanos() as i32,
+    }
 }
 
 /// Convenience: map a stream of bridge events into a vector of Warp events.
 /// Used by tests and by the app-layer stream adapter.
-pub fn drain_to_warp_events(writer: &mut ExchangeWriter, events: Vec<BridgeEvent>) -> Vec<api::ResponseEvent> {
+pub fn drain_to_warp_events(
+    writer: &mut ExchangeWriter,
+    events: Vec<BridgeEvent>,
+) -> Vec<api::ResponseEvent> {
     let mut out = Vec::new();
     for event in events {
         out.extend(writer.write(&event));
@@ -767,7 +1024,9 @@ pub fn summarize_events(events: &[api::ResponseEvent]) -> Vec<String> {
                     match action.action.as_ref() {
                         Some(api::client_action::Action::CreateTask(_)) => "create_task",
                         Some(api::client_action::Action::AddMessagesToTask(_)) => "add_messages",
-                        Some(api::client_action::Action::AppendToMessageContent(_)) => "append_text",
+                        Some(api::client_action::Action::AppendToMessageContent(_)) => {
+                            "append_text"
+                        }
                         Some(api::client_action::Action::UpdateTaskMessage(_)) => "update_message",
                         Some(_) => "other_action",
                         None => "empty_action",
@@ -781,3 +1040,7 @@ pub fn summarize_events(events: &[api::ResponseEvent]) -> Vec<String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "warp_events_tests.rs"]
+mod tests;

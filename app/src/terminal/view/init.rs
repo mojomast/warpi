@@ -153,7 +153,8 @@ pub fn init(app: &mut AppContext) {
             },
             TerminalAction::ResumeConversation,
             id!("Terminal") & !id!("IMEOpen") & id!(CAN_RESUME_CONVERSATION_KEY),
-        ),
+        )
+        .with_enabled(|| !crate::standalone_ui::hidden_ui()),
         // Fork from the last known good exchange keybinding
         FixedBinding::new_per_platform(
             PerPlatformKeystroke {
@@ -1103,6 +1104,7 @@ pub fn init(app: &mut AppContext) {
             FeatureFlag::AgentView.is_enabled()
                 && FeatureFlag::CloudMode.is_enabled()
                 && FeatureFlag::CloudModeFromLocalSession.is_enabled()
+                && !crate::standalone_ui::hidden_ui()
         })
         .with_group(bindings::BindingGroup::WarpAi.as_str())]);
         if cfg!(target_os = "macos") {

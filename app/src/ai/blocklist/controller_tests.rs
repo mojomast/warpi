@@ -438,6 +438,34 @@ fn cancelling_conversation_aborts_pending_auto_resume() {
 }
 
 #[test]
+fn cancelling_without_a_live_stream_cancels_the_standalone_turn() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        // A paused standalone turn has no live response stream: stop must still
+        // reach the bridge's `turn.cancel` or the next prompt queues behind the
+        // parked approval until the pending-tool deadline.
+        let conversation_id = AIConversationId::new();
+        terminal.update(&mut app, |terminal, ctx| {
+            terminal.ai_controller().update(ctx, |controller, ctx| {
+                controller.cancel_conversation_progress(
+                    conversation_id,
+                    CancellationReason::ManuallyCancelled,
+                    ctx,
+                );
+            });
+        });
+
+        let recorded = crate::ai::standalone::take_recorded_cancel_calls();
+        assert!(
+            recorded.contains(&conversation_id.to_string()),
+            "the no-stream cancel must reach the standalone glue; recorded: {recorded:?}"
+        );
+    });
+}
+
+#[test]
 fn mock_response_stream_updates_history_through_controller() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);

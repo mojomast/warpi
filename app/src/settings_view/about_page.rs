@@ -1,7 +1,8 @@
 use warpui::assets::asset_cache::AssetSource;
+use warpui::color::ColorU;
 use warpui::elements::{
-    Align, CacheOption, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, Image,
-    MainAxisAlignment, MouseStateHandle, ParentElement, Wrap,
+    Align, CacheOption, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
+    Image, MainAxisAlignment, MouseStateHandle, ParentElement, Radius, Wrap,
 };
 use warpui::ui_components::components::UiComponent;
 use warpui::{AppContext, Entity, TypedActionView, View, ViewContext, ViewHandle};
@@ -13,6 +14,7 @@ use super::settings_page::{
 };
 use crate::appearance::Appearance;
 use crate::channel::ChannelState;
+use crate::standalone_ui::WARPI_VERSION;
 use crate::themes::theme::ColorScheme;
 use crate::workspace::WorkspaceAction;
 
@@ -45,9 +47,13 @@ impl View for AboutPageView {
     }
 }
 
+const WARPI_WORDMARK_PATH: &str = "bundled/png/warpi-wordmark.png";
+const WARPI_REPO_URL: &str = "https://github.com/mojomast/warpi";
+
 #[derive(Default)]
 struct AboutPageWidget {
     copy_version_button_mouse_state: MouseStateHandle,
+    repo_link_mouse_state: MouseStateHandle,
 }
 
 impl SettingsWidget for AboutPageWidget {
@@ -66,13 +72,33 @@ impl SettingsWidget for AboutPageWidget {
         let theme = appearance.theme();
         let ui_builder = appearance.ui_builder();
 
-        let image_path = if theme.inferred_color_scheme() == ColorScheme::LightOnDark {
-            "bundled/svg/warp-logo-with-light-title.svg"
+        let wordmark = ConstrainedBox::new(
+            Image::new(
+                AssetSource::Bundled {
+                    path: WARPI_WORDMARK_PATH,
+                },
+                CacheOption::BySize,
+            )
+            .finish(),
+        )
+        .with_max_height(64.)
+        .with_max_width(280.)
+        .finish();
+
+        // The wordmark is light ink on a transparent canvas: it reads directly on the dark
+        // theme, but needs a dark tile to stay legible when the theme is light.
+        let logo: Box<dyn Element> = if theme.inferred_color_scheme() == ColorScheme::LightOnDark {
+            wordmark
         } else {
-            "bundled/svg/warp-logo-with-dark-title.svg"
+            Container::new(wordmark)
+                .with_background_color(ColorU::new(0x0B, 0x0D, 0x10, 0xFF))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(12.)))
+                .with_horizontal_padding(20.)
+                .with_vertical_padding(12.)
+                .finish()
         };
 
-        let version = ChannelState::app_version().unwrap_or("v#.##.###");
+        let version = ChannelState::app_version().unwrap_or(WARPI_VERSION);
 
         let version_text = ui_builder
             .span(version.to_string())
@@ -100,25 +126,28 @@ impl SettingsWidget for AboutPageWidget {
                     .finish(),
             ]);
 
+        let repo_link = ui_builder
+            .link(
+                "github.com/mojomast/warpi".to_owned(),
+                Some(WARPI_REPO_URL.to_owned()),
+                None,
+                self.repo_link_mouse_state.clone(),
+            )
+            .soft_wrap(false)
+            .build()
+            .with_margin_top(16.)
+            .finish();
+
         Align::new(
             Flex::column()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(
-                    ConstrainedBox::new(
-                        Image::new(
-                            AssetSource::Bundled { path: image_path },
-                            CacheOption::BySize,
-                        )
-                        .finish(),
-                    )
-                    .with_max_height(100.)
-                    .with_max_width(350.)
-                    .finish(),
-                )
+                .with_child(logo)
                 .with_child(version_row.finish())
+                .with_child(repo_link)
                 .with_child(
                     ui_builder
-                        .span("Copyright 2026 Warp")
+                        .span("© 2026 warpi contributors. Warp is © 2020–2026 Denver Technologies, Inc.")
+                        .with_soft_wrap()
                         .build()
                         .with_margin_top(16.)
                         .finish(),

@@ -154,6 +154,33 @@ export interface ProviderConfig {
   };
 }
 
+export interface SubagentBudgetConfig {
+  /** Default model round trips per child; clamped to 1..40. */
+  max_turns?: number;
+  /** Default per-child wall-clock budget; clamped to 1..1800 seconds. */
+  deadline_seconds?: number;
+  /** Per-child token cap (input + output, cache included); default 200_000. */
+  token_cap?: number;
+  /** Per-parent-turn aggregate child token cap; default 600_000. */
+  aggregate_token_cap?: number;
+  /** `task.progress` cadence; default 30_000 ms, clamped to 250..120_000. */
+  heartbeat_ms?: number;
+}
+
+/**
+ * Opt-in subagent prototype configuration. Absent or `enabled: false` keeps
+ * every existing conversation byte-identical: no `task` tool, no child
+ * sessions, no extra events.
+ */
+export interface SubagentConfig {
+  enabled?: boolean;
+  /** Children per parent turn; default 3, hard cap 8. */
+  max_children?: number;
+  /** Depth limit; v1 supports 1 only (children never get `task`). */
+  max_depth?: number;
+  budget?: SubagentBudgetConfig;
+}
+
 export interface SessionOpenData {
   working_dir: string;
   /** Fork-specific private data directory. Never the user's ~/.pi. */
@@ -168,6 +195,7 @@ export interface SessionOpenData {
   provider: ProviderConfig;
   compaction?: { enabled?: boolean; reserve_tokens?: number; keep_recent_tokens?: number };
   retry?: { enabled?: boolean; max_retries?: number; base_delay_ms?: number };
+  subagents?: SubagentConfig;
 }
 
 export type ToolResultStatus = "success" | "rejected" | "error";
@@ -207,13 +235,28 @@ export interface ToolCallSpec {
   arguments: unknown;
 }
 
+export interface AgentUsageCost {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  /** USD; the SDK reports zeros because standalone profiles register zero rates. */
+  total: number;
+}
+
 export interface AgentUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;
   cache_write_tokens?: number;
+  /** Subset of `output_tokens` when the provider reports a breakdown. */
+  reasoning_tokens?: number;
   total_tokens?: number;
+  cost?: AgentUsageCost;
 }
+
+/** Where a `context.updated` reading came from. */
+export type ContextUsageSource = "usage" | "estimate" | "compaction_estimate";
 
 export type RuntimeEvent =
   | {
@@ -226,6 +269,12 @@ export type RuntimeEvent =
         compaction: boolean;
         cancellation: boolean;
         context_files: boolean;
+        /**
+         * The helper can host read-only depth-1 child sessions when a session
+         * opens with `subagents.enabled: true`. Capability only; sessions are
+         * unchanged unless the session-open payload opts in.
+         */
+        subagents: boolean;
       };
     }
   | {
@@ -236,6 +285,8 @@ export type RuntimeEvent =
       active_tools: string[];
       model_id: string;
       working_dir: string;
+      context_window: number;
+      max_output_tokens: number;
     }
   | { type: "turn.started" }
   | { type: "assistant.delta"; message_id: string; text: string }
@@ -247,6 +298,96 @@ export type RuntimeEvent =
   | { type: "turn.cancelled"; reason: string }
   | { type: "turn.failed"; code: string; message: string; retryable: boolean }
   | { type: "error"; code: string; message: string; retryable?: boolean }
+  | {
+      /**
+       * One per assistant message, including tool-call-only and errored
+       * messages (zero usage). Timings are wall-clock approximations: the
+       * pinned SDK exposes no generation timestamps, so `duration_ms` spans the
+       * agent turn start (or the assistant `message_start`) to `message_end`,
+       * and `first_token_ms` spans the same start to the first streamed
+       * text/thinking/tool-call event. Both include request build and
+       * time-to-first-byte.
+       */
+      type: "assistant.usage";
+      message_id: string;
+      model_id: string;
+      api: string;
+      usage: AgentUsage;
+      duration_ms: number;
+      first_token_ms?: number;
+      /** `output_tokens / duration_ms * 1000`, omitted when not measurable. */
+      output_tokens_per_second?: number;
+      stop_reason: string;
+    }
+  | {
+      /**
+       * Context-window reading. `tokens: null` means unknown (e.g. right after
+       * compaction); `context_window` is omitted only when the effective limit
+       * is unknown, and `percent` is null whenever `tokens` is.
+       */
+      type: "context.updated";
+      tokens: number | null;
+      context_window?: number;
+      /** `tokens / context_window * 100` (the SDK scale), or null when unknown. */
+      percent: number | null;
+      source: ContextUsageSource;
+    }
+  | {
+      /**
+       * A `task` tool call started a child session. Diagnostic-level; carries
+       * the parent turn identity and the child attribution ids.
+       */
+      type: "task.started";
+      task_id: string;
+      child_session_id: string;
+      description: string;
+      subagent_type: "explore" | "verify";
+      prompt_bytes: number;
+      max_turns: number;
+      deadline_ms: number;
+      token_cap: number;
+    }
+  | {
+      /**
+       * Periodic liveness heartbeat while a child runs. The parent exchange
+       * emits no provider events during a child, so this keeps the bridge's
+       * stall watchdog from killing an otherwise healthy turn.
+       */
+      type: "task.progress";
+      task_id: string;
+      child_session_id: string;
+      elapsed_ms: number;
+      turns: number;
+      tool_calls: number;
+      tokens: { input_tokens: number; output_tokens: number; total_tokens: number };
+      pending_tools: number;
+    }
+  | {
+      /**
+       * Terminal child outcome. `usage` is the child's own token usage, so
+       * the ledger/UI can attribute child cost without a Warp proto change.
+       */
+      type: "task.completed";
+      task_id: string;
+      child_session_id: string;
+      status: "ok" | "error" | "timeout" | "cancelled" | "budget_exceeded";
+      reason?: string;
+      subagent_type: "explore" | "verify";
+      turns: number;
+      tool_calls: number;
+      usage: AgentUsage;
+      wall_ms: number;
+      summary_bytes: number;
+    }
   | { type: "compaction.started"; reason: string }
-  | { type: "compaction.finished"; reason: string; tokens_before?: number; tokens_after?: number; summarized: boolean }
+  | {
+      type: "compaction.finished";
+      reason: string;
+      summarized: boolean;
+      tokens_before?: number;
+      tokens_after?: number;
+      /** Usage of the summarization LLM call, when the SDK reports it. */
+      summary_usage?: AgentUsage;
+      duration_ms?: number;
+    }
   | { type: "diagnostic"; level: "info" | "warn" | "error"; message: string };

@@ -735,6 +735,7 @@ impl Window {
         window_target: &ActiveEventLoop,
         window_options: WindowOptions,
         window_class: &Option<String>,
+        window_icon: Option<&[u8]>,
         tiling_window_manager: bool,
         downrank_non_nvidia_vulkan_adapters: bool,
     ) -> Result<winit::window::WindowId> {
@@ -742,6 +743,7 @@ impl Window {
             window_target,
             &window_options,
             window_class,
+            window_icon,
             tiling_window_manager,
         )?;
 
@@ -1265,6 +1267,7 @@ fn create_window(
     window_target: &ActiveEventLoop,
     _window_options: &WindowOptions,
     _window_class: &Option<String>,
+    _window_icon: Option<&[u8]>,
     _tiling_window_manager: bool,
 ) -> Result<winit::window::Window> {
     use winit::platform::web::{WindowAttributesExtWebSys, WindowExtWebSys};
@@ -1299,6 +1302,7 @@ fn create_window(
     window_target: &ActiveEventLoop,
     window_options: &WindowOptions,
     _window_class: &Option<String>,
+    _window_icon: Option<&[u8]>,
     tiling_window_manager: bool,
 ) -> Result<winit::window::Window> {
     let decorations = !window_options.hide_title_bar;
@@ -1370,6 +1374,23 @@ fn create_window(
             if most_overlapping_monitor.is_none() {
                 window_bounds = WindowBounds::Default;
             }
+        }
+    }
+
+    // X11 accepts a client-provided window icon; Wayland ignores it and resolves the
+    // icon from the .desktop file instead.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if let Some(bytes) = _window_icon {
+        match image::load_from_memory(bytes) {
+            Ok(image) => {
+                let rgba = image.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                match winit::window::Icon::from_rgba(rgba.into_raw(), width, height) {
+                    Ok(icon) => window_attributes.window_icon = Some(icon),
+                    Err(err) => log::warn!("Could not build window icon: {err:?}"),
+                }
+            }
+            Err(err) => log::warn!("Could not decode window icon PNG: {err}"),
         }
     }
 

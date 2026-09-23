@@ -917,12 +917,22 @@ impl View for QueuedPromptsPanelView {
         let queue: Vec<_> = queue_model.queue(conv_id).to_vec();
         let editing_row_id = queue_model.editing_row(conv_id);
         let collapsed = self.collapsed;
+        // Standalone turns cannot be steered, so the header advertises the
+        // cancel-and-send-now keybinding whenever it would actually fire.
+        let send_now_keystroke = (self.can_send_prompt
+            && crate::ai::standalone::is_enabled()
+            && !queue_model.is_dispatch_blocked(conv_id)
+            && queue
+                .first()
+                .is_some_and(|row| !row.is_locked() && row.is_ready()))
+        .then(crate::terminal::input::send_queued_prompt_now_keystroke);
 
         let panel_view_id = self.view_id;
         let header = render_header(
             queue.len(),
             collapsed,
             self.should_show_enter_hint(app),
+            send_now_keystroke,
             &self.header_mouse_state,
             app,
         );
@@ -1039,6 +1049,7 @@ fn render_header(
     count: usize,
     collapsed: bool,
     show_enter_hint: bool,
+    send_now_keystroke: Option<Keystroke>,
     header_mouse_state: &MouseStateHandle,
     app: &AppContext,
 ) -> Box<dyn Element> {
@@ -1099,6 +1110,25 @@ fn render_header(
                     .with_color(sub_text_color)
                     .with_selectable(false)
                     .finish(),
+            );
+        }
+        if let Some(keystroke) = send_now_keystroke {
+            let keycap =
+                render_keystroke_with_color_overrides(&keystroke, Some(keycap_color), None, app);
+            row.add_child(Container::new(keycap).with_margin_left(8.).finish());
+            row.add_child(
+                Text::new(
+                    "to cancel the running turn and send now",
+                    ui_font_family,
+                    ui_font_size,
+                )
+                .with_style(Properties {
+                    style: Style::Normal,
+                    weight: Weight::Normal,
+                })
+                .with_color(sub_text_color)
+                .with_selectable(false)
+                .finish(),
             );
         }
         let row = row.finish();

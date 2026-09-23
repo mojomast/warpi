@@ -645,6 +645,17 @@ impl BlocklistAIController {
                 me.dispatch_queued_warp_agent_prompt(*conversation_id, None, ctx);
             }
         });
+        // Standalone turns that ended while no exchange stream was attached
+        // (for example a pending approval that expired). Withdraw whatever is
+        // still waiting on the turn so a dead run's card cannot execute.
+        let turn_deaths = crate::ai::standalone::subscribe_turn_deaths();
+        ctx.spawn_stream_local(
+            futures::stream::unfold(turn_deaths, |receiver| async move {
+                receiver.recv().await.ok().map(|death| (death, receiver))
+            }),
+            |me, death, ctx| me.handle_standalone_turn_death(death, ctx),
+            |_, _| {},
+        );
         let streamer = OrchestrationEventStreamer::handle(ctx);
         ctx.subscribe_to_model(&streamer, move |me, _, event, ctx| match event {
             OrchestrationEventStreamerEvent::DormantClaudeWakeReady {
@@ -2962,6 +2973,17 @@ impl BlocklistAIController {
             .in_flight_response_streams
             .try_cancel_streams_for_conversation(conversation_id, reason, ctx)
         {
+            // A standalone turn paused on an approval card has no live response
+            // stream: its exchange settled with `ExchangePaused`, and the Pi
+            // turn is still parked in the helper. Cancelling only the pending
+            // actions never reaches the bridge, so stop / "send now" has to
+            // cancel the turn explicitly or the next prompt queues behind it
+            // until the pending-tool deadline.
+            ctx.spawn(
+                crate::ai::standalone::cancel_active_turn(&conversation_id.to_string()),
+                |_, _, _| {},
+            );
+
             // No active stream whose cancellation would mark the conversation `Cancelled`.
             // A parked auto-resume was aborted above; nothing else will move the
             // conversation out of TransientError, so surface the cancellation directly.
@@ -2995,6 +3017,32 @@ impl BlocklistAIController {
             });
             self.set_input_mode_for_cancellation(ctx);
         }
+    }
+
+    /// A standalone turn ended while the app had no exchange stream attached
+    /// (the paused-approval shape). Cancel the actions still waiting on that
+    /// turn so an expired card is withdrawn instead of executing a command for
+    /// a run that no longer exists.
+    fn handle_standalone_turn_death(
+        &mut self,
+        death: crate::ai::standalone::TurnDeath,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Ok(conversation_id) = AIConversationId::try_from(death.conversation_id) else {
+            return;
+        };
+        log::warn!(
+            "standalone: turn for {conversation_id} ended without an exchange stream ({}): {}",
+            death.code,
+            death.message
+        );
+        self.action_model.update(ctx, |action_model, ctx| {
+            action_model.cancel_all_pending_actions(
+                conversation_id,
+                Some(CancellationReason::ManuallyCancelled),
+                ctx,
+            );
+        });
     }
 
     /// Finalizes a conversation as a terminal failure because an agent-issued

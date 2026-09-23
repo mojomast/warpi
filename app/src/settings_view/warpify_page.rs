@@ -161,6 +161,7 @@ impl WarpifyPageView {
         if warpify_settings
             .enable_ssh_warpification
             .is_supported_on_current_platform()
+            && !crate::standalone_ui::hidden_ui()
         {
             categories.push(Category::with_header(
                 CategoryHeader::new("SSH").with_subtitle("Warpify your interactive SSH sessions."),

@@ -1532,6 +1532,30 @@ define_settings_group!(AISettings, settings: [
     // TUI-only and file-backed so the choice persists across TUI sessions.
     usage_display_mode: TuiUsageDisplayMode,
     usage_display_unit: UsageDisplayUnit,
+    // Whether standalone (local Pi) responses show the per-response token usage
+    // footnote. Standalone-only and local: never cloud-synced.
+    standalone_response_usage: StandaloneResponseUsage {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "agents.warp_agent.standalone.response_usage",
+        description: "Show token usage and timing under each standalone response.",
+    },
+    // Whether standalone (local Pi) conversations show the context-window usage
+    // meter in the input footer. Standalone-only and local: never cloud-synced.
+    standalone_context_meter: StandaloneContextMeter {
+        type: bool,
+        default: true,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "agents.warp_agent.standalone.context_meter",
+        description: "Show the context-window usage meter for standalone conversations.",
+    },
     // Ordered visibility configuration for the TUI's bottom statusline.
     // TUI-only and local so separate devices can use different terminal layouts.
     tui_statusline: TuiStatusline {
@@ -2371,9 +2395,12 @@ impl AISettings {
 
     pub fn is_voice_input_enabled(&self, app: &warpui::AppContext) -> bool {
         // Voice input is conditionally-compiled because it requires additional dependencies on some platforms.
+        // Warp's transcription service is server-backed, so it is unavailable
+        // with the local standalone backend.
         cfg!(feature = "voice_input")
             && self.is_any_ai_enabled(app)
             && *self.voice_input_enabled_internal
+            && !crate::standalone_ui::hides_voice_input()
     }
 
     /// Preferred spoken language for voice transcription, or `None` for auto-detect.
@@ -2428,8 +2455,11 @@ impl AISettings {
 
     /// Returns true when local-to-cloud handoff is effectively enabled.
     /// False when the user/org has disabled it, cloud conversations are off,
-    /// or AI is globally off.
+    /// AI is globally off, or the local standalone backend is active.
     pub fn is_cloud_handoff_enabled(&self, app: &warpui::AppContext) -> bool {
+        if crate::standalone_ui::hidden_ui() {
+            return false;
+        }
         if !self.is_any_ai_enabled(app) || *self.should_force_disable_cloud_handoff {
             return false;
         }

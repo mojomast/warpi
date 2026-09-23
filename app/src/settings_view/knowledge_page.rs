@@ -335,6 +335,11 @@ struct WarpDriveContextWidget {
 impl SettingsWidget for WarpDriveContextWidget {
     type View = KnowledgePageView;
 
+    /// Warp Drive objects do not exist in the local standalone backend.
+    fn should_render(&self, _app: &AppContext) -> bool {
+        !crate::standalone_ui::hidden_ui()
+    }
+
     fn search_terms(&self) -> &str {
         "warp drive agent context contents personal team developer workflows environments notebooks environment variables"
     }

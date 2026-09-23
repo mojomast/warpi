@@ -62,7 +62,7 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>CFBundleURLTypes</key>
     <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>warpi</string></array></dict></array>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026, Denver Technologies, Inc</string>
+    <string>© 2026 warpi contributors. Warp is © 2020–2026 Denver Technologies, Inc.</string>
     </dict>
     </plist>
 "#.as_bytes());

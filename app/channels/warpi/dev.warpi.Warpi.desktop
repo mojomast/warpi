@@ -1,0 +1,21 @@
+[Desktop Entry]
+# The version of the desktop entry spec this conforms to.
+Version=1.0
+
+Type=Application
+
+Name=warpi
+GenericName=TerminalEmulator
+
+Exec=warpi %U
+StartupWMClass=dev.warpi.Warpi
+
+Icon=dev.warpi.Warpi
+
+Categories=System;TerminalEmulator;
+
+# Don't run this application within a terminal.
+Terminal=false
+
+# Register ourselves as the handler for warpi:// URLs.
+MimeType=x-scheme-handler/warpi;
