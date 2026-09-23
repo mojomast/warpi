@@ -6,8 +6,8 @@ Text logs and screenshots captured on the audit machine (Linux x86_64,
 
 | File | What it shows |
 | --- | --- |
-| `rust-tests.log` | `cargo test -p standalone_agent`: 24 tests, 0 failures (14 unit + 1 session isolation + 9 vertical slice). The opt-in real-provider test is not in this log and reports `NOT RUN` without credentials. |
-| `helper-tests.log` | `node --import tsx --test test/*.test.ts` in `standalone/pi-helper`: 13 tests, 0 failures. |
+| `rust-tests.log` | `cargo test -p standalone_agent`: 24 tests, 0 failures (14 unit + 1 session isolation + 9 vertical slice) — recorded before the turn-lifecycle/queueing/`bash_output` suites. The current source has 56 test functions; those are not re-run yet (`VALIDATION.md`). |
+| `helper-tests.log` | `node --import tsx --test test/*.test.ts` in `standalone/pi-helper`: 13 tests, 0 failures. The current source has 14 (`bash_output` and guardrail tests post-date the log). |
 | `gui-build.log` | `cargo build -p warp --bin warpi --features gui`: success in 4m16s, 5 warnings. |
 | `gui-native-window.png` | The native Warp GUI running under Xvfb + Mesa lavapipe with the standalone config loaded (universal input, agent conversation hint). |
 | `gui-typed-input.png` | Injected keyboard input reaching the native window (a shell command executed in a Warp block). |
