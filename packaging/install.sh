@@ -71,7 +71,7 @@ if ((${#docs[@]} > 0)); then
     cp -a "${docs[@]}" "$PREFIX/standalone/"
 fi
 
-for name in LICENSE-AGPL LICENSE-MIT LICENSE-NOTES.md config.example.json; do
+for name in LICENSE-AGPL LICENSE-MIT LICENSE-NOTES.md THIRD_PARTY_LICENSES.txt config.example.json; do
     [ -e "$SCRIPT_DIR/$name" ] && cp -a "$SCRIPT_DIR/$name" "$PREFIX/$name"
 done
 

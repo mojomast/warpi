@@ -1,0 +1,160 @@
+THIRD-PARTY LICENSES — warpi
+============================
+
+warpi is an independent fork of Warp. This file records the third-party
+dependencies of the warpi runtime distribution and the license each declares.
+Read it with the project's own license files (LICENSE-AGPL, LICENSE-MIT,
+LICENSE-NOTES.md) and the donor notice (standalone/DONOR-ATTRIBUTION.md).
+
+This is a *census*, not the full per-crate license-text aggregation. It records
+each dependency's declared SPDX license expression and the handful of
+non-permissive or dual-licensed crates that need an election or a NOTICE. The
+full texts, copyright notices, and Apache-2.0 NOTICE propagation are produced by
+`cargo about generate` (see "Regenerating the authoritative file" below); no
+`cargo about` was available in the environment that produced this census, which
+is stated here deliberately rather than over-claiming completeness.
+
+Scope
+-----
+* Rust: runtime ("normal") dependencies of the `warpi` GUI binary
+  (`-p warp --features gui`). Build-script and dev-only dependencies are
+  excluded, matching `about.toml` (`ignore-build-dependencies = true`,
+  `ignore-dev-dependencies = true`).
+* npm: production dependencies bundled with the private Pi helper
+  (`standalone/pi-helper`; dev-only packages excluded).
+
+Method
+------
+* Rust census, 2026-09-23, from the pinned dependency set in `Cargo.lock`:
+
+      cargo tree -p warp --features gui --target x86_64-unknown-linux-gnu \
+          --edges normal --offline --format "{p}"
+
+  Each locked crate's declared `license` field was then read from the local
+  Cargo registry source cache and the Cargo git checkouts.
+* npm census: the production subset of `standalone/pi-helper/package-lock.json`
+  (`"dev": true` entries excluded).
+
+Limitations (do not over-read this file)
+----------------------------------------
+* The Rust census is the normal-edge closure for the Linux target with the `gui`
+  feature. Windows and macOS may resolve additional platform-specific crates.
+* Counts are from the dependency set at the fork commit that added this file;
+  regenerate before each release.
+* Declared license expressions are recorded here, not copyright notices or
+  license texts. For a binary redistribution the MIT/BSD/ISC notices and the
+  Apache-2.0 NOTICE must travel with the full generated file (or the shipped
+  per-package files), not with this census alone.
+
+Project licenses (for contrast)
+-------------------------------
+* The combined application is AGPL-3.0-only (`LICENSE-AGPL`), except
+  `crates/warpui` and `crates/warpui_core`, which are MIT (`LICENSE-MIT`).
+* New fork code (`crates/standalone_agent`, `standalone/**`, the packaging
+  scripts) is AGPL-3.0-only. See `LICENSE-NOTES.md`.
+
+Rust runtime dependency census
+------------------------------
+Third-party crates on normal edges: 947.
+
+Declared license expressions and how many crates declare each:
+
+    340  MIT OR Apache-2.0
+    269  MIT
+     80  Apache-2.0 OR MIT
+     66  Apache-2.0
+     60  MIT/Apache-2.0
+     19  Unicode-3.0
+     14  Unlicense OR MIT
+     12  BSD-3-Clause
+      9  Apache-2.0/MIT
+      8  MIT OR Apache-2.0 OR Zlib
+      7  Unlicense/MIT
+      6  MPL-2.0
+      5  ISC
+      4  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+      3  Zlib OR Apache-2.0 OR MIT
+      3  Apache-2.0 (workspace-inherited)
+      3  Zlib
+      3  Apache-2.0 OR ISC OR MIT
+      2  CC0-1.0 OR MIT-0 OR Apache-2.0
+      2  0BSD
+      2  MIT / Apache-2.0
+      2  Apache-2.0 / MIT
+      2  BSD-3-Clause OR Apache-2.0
+      2  CC0-1.0
+      2  MIT (workspace-inherited)
+      1  0BSD OR MIT OR Apache-2.0
+      1  BSD-2-Clause
+      1  ISC AND (Apache-2.0 OR ISC)
+      1  ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause
+             AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)
+      1  GPL-3.0+ OR BSD-3-Clause
+      1  BSD-3-Clause AND MIT
+      1  BSD-3-Clause/MIT
+      1  AGPL-3.0-only
+      1  (Apache-2.0 OR MIT) AND BSD-3-Clause
+      1  zlib-acknowledgement OR MIT
+      1  Apache-2.0 / MIT / MPL-2.0
+      1  MIT AND BSD-3-Clause
+      1  MIT OR Zlib OR Apache-2.0
+      1  LGPL-3.0-or-later OR MPL-2.0
+      1  Apache-2.0 AND ISC
+      1  MIT/BSD-3-Clause
+      1  Apache-2.0 OR BSL-1.0
+      1  Apache-2.0 OR GPL-2.0-only
+      1  (MIT OR Apache-2.0) AND Unicode-DFS-2016
+      1  BSD-2-Clause OR Apache-2.0 OR MIT
+
+Dual-licensed crates and the license this distribution elects:
+
+    priority-queue 2.5.0        LGPL-3.0-or-later OR MPL-2.0   -> MPL-2.0
+    bounded-vec-deque 0.1.1     GPL-3.0+ OR BSD-3-Clause       -> BSD-3-Clause
+    self_cell 1.2.1             Apache-2.0 OR GPL-2.0-only     -> Apache-2.0
+
+MPL-2.0 crates (file-level copyleft; keep their source offers intact):
+
+    cynic 3.8.0, cynic-codegen 3.8.0, cynic-parser 0.4.5,
+    cynic-proc-macros 3.8.0, freedesktop-desktop-entry 0.5.0, option-ext 0.2.0
+
+`htmlescape 0.3.1` (Apache-2.0 / MIT / MPL-2.0) has a permissive branch.
+
+AGPL-3.0-only dependencies (same license as the application; they are why the
+combined work cannot be relicensed):
+
+    command-corrections            (git: warpdotdev/command-signatures)
+    session-sharing-protocol       (git)
+    warp_multi_agent_api           (git: warpdotdev/warp-proto-apis @ f5c1878)
+
+Apache-2.0 dependencies carry a NOTICE obligation. The full text and NOTICE
+handling is emitted by `cargo about generate` below; do not drop the generated
+file from a redistribution.
+
+npm runtime dependency census (bundled Pi helper)
+-------------------------------------------------
+Production packages: 141.
+
+    MIT             70
+    Apache-2.0      45
+    BSD-3-Clause    13
+    ISC              7
+    BlueOak-1.0.0    5
+    0BSD             1
+
+Direct dependencies: `@earendil-works/pi-coding-agent` 0.84.2 (MIT) and
+`typebox` 1.3.7 (MIT). Every package ships its own license file inside the
+bundled `node_modules`; the packaging scripts bundle the production tree
+unpruned so those files travel with the helper. Do not strip them.
+
+Regenerating the authoritative file
+-----------------------------------
+The upstream pipeline already knows how to emit the full file from
+`about.toml`/`about.hbs`:
+
+    cargo about generate --workspace --manifest-path Cargo.toml \
+        -c about.toml -o THIRD_PARTY_LICENSES.txt about.hbs
+
+(see `script/prepare_bundled_resources`, which also appends the non-Cargo
+licenses listed in `ADDITIONAL_LICENSES`). Re-run the npm census with
+`npm ci --omit=dev` in `standalone/pi-helper` and a license checker. Replace
+this census with that output before a commercial release.

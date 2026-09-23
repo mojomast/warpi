@@ -20,6 +20,23 @@ No donor source file was copied into this repository. The donor's separate
 `standalone/REUSE.md` for the exact list of ported behaviours and deliberate
 deviations.
 
+## Donor attribution register
+
+Any code or behaviour taken from another project must be recorded in this table
+before it is merged, with the donor's copyright and permission notice reproduced
+in `standalone/DONOR-ATTRIBUTION.md`. Nothing beyond the entries below has been
+copied into this repository.
+
+| Donor | Source pin | License | What was used | Notice location | Status |
+| --- | --- | --- | --- | --- | --- |
+| sasuke39/openwarp | commit `5045d30` | MIT | NDJSON tool-brokering protocol ideas and Warp client-action event shapes, reimplemented (no source copied) | `standalone/DONOR-ATTRIBUTION.md`, `standalone/REUSE.md` | recorded |
+| Jgracier/ClikCode | n/a | MIT | **none** — an internal design review informed parked roadmap ideas only | — | nothing to record |
+
+The ClikCode row is deliberately empty: the deferred ClikCode-inspired items are
+design ideas, not borrowed code. A future borrow must add its own row here,
+reproduce the donor's MIT notice in `standalone/DONOR-ATTRIBUTION.md`, and list
+the affected files in `standalone/REUSE.md`.
+
 ## What a redistributor must preserve
 
 The fork combines an AGPL-3.0-only work (the application), an MIT-licensed part
@@ -45,7 +62,11 @@ npm dependencies. A binary or source redistribution must:
 4. **Preserve dependency notices.** If you redistribute the bundled
    `node_modules`, keep each package's `license` file and `package.json`
    metadata (for example `typebox`'s `license` file and the Pi SDK's MIT
-   declaration). Do not strip them when pruning the bundle.
+   declaration). Do not strip them when pruning the bundle. Ship
+   `THIRD_PARTY_LICENSES.txt` with both source and binary distributions: it is
+   the dependency-license census for the Rust runtime closure and the bundled
+   npm production tree, and the release pipeline regenerates the full per-crate
+   texts with `cargo about generate`.
 5. **Do not imply affiliation.** Do not use Warp's or the donor's names or marks
    to suggest endorsement, and keep the disclaimer in `README.md` with any
    redistribution.
