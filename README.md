@@ -420,39 +420,39 @@ equivalent of Warp running the approved command).
   whose lock is held is skipped; the helper also exits on stdin EOF). See
   `standalone/PLAN.md`.
 
-### Next up (design-level ideas from a third-party review)
+### Parked ideas (deferred, from a third-party review)
 
-These are ideas, not commitments or implemented behavior. They come from an
-internal review of the MIT-licensed
+These are parked, not scheduled. The current focus is finishing and shipping the
+existing tracks — local UI and observability, durable queueing, subagents, and
+release consolidation — and this list is a backlog to revisit afterwards. They
+come from an internal review of the MIT-licensed
 [Jgracier/ClikCode](https://github.com/Jgracier/ClikCode) — recorded as
 `standalone/research/clikcode-review.md` in the development tree, which is not
 part of this repository. Design inspiration is free to reuse; any copied code
 needs the MIT copyright and permission notice recorded in `LICENSE-NOTES.md`
 first.
 
-- **Retry recoverable provider errors.** Today an endpoint error (rate limit,
-  busy server, dropped connection) ends the turn as a generic failure. Next:
-  classify errors by their kind or status and retry the recoverable ones with
-  bounded backoff, without fighting the existing inactivity and cancellation
+- **Retry recoverable provider errors (deferred).** Today an endpoint error (rate
+  limit, busy server, dropped connection) ends the turn as a generic failure. The
+  idea is to classify errors by kind or status and retry the recoverable ones
+  with bounded backoff, without fighting the existing inactivity and cancellation
   timeouts.
-- **Steer a running turn.** Prompts submitted mid-turn are queued today, and the
-  send-now keybinding cancels the running turn and sends immediately. Steering
-  would let a new message join the turn already running, taking effect at its
-  next step.
-
-### Later
-
-- **Two-stage compaction with an authoritative token count.** Elide old tool
-  output before summarizing, never split a tool call from its result, and prefer
-  the endpoint-reported input-token count over local estimates for the context
-  and usage display.
-- **Per-model context/output defaults.** A small longest-prefix table so new
-  provider presets start with sensible limits the user can still override.
-- **Clearer permission-policy wording.** Reusable ways to phrase and structure
-  allow/deny decisions (narrowest-rule suggestions, compound-command awareness)
-  as subagent approvals are designed; Warp remains the approval authority.
-- **Safer helper packaging.** Build-time assertions and an install-and-run test
-  for the Node helper bundle.
+- **Steer a running turn (deferred).** Prompts submitted mid-turn are queued
+  today, and the send-now keybinding cancels the running turn and sends
+  immediately. The idea is to let a new message join the turn already running,
+  taking effect at its next step.
+- **Two-stage compaction with an authoritative token count (deferred).** Elide
+  old tool output before summarizing, never split a tool call from its result,
+  and prefer the endpoint-reported input-token count over local estimates for the
+  context and usage display.
+- **Per-model context/output defaults (deferred).** A small longest-prefix table
+  so new provider presets start with sensible limits the user can still override.
+- **Clearer permission-policy wording (deferred).** Reusable ways to phrase and
+  structure allow/deny decisions (narrowest-rule suggestions, compound-command
+  awareness) as subagent approvals are designed; Warp remains the approval
+  authority.
+- **Safer helper packaging (deferred).** Build-time assertions and an
+  install-and-run test for the Node helper bundle.
 
 ## Licensing and attribution
 
