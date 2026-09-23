@@ -35,7 +35,7 @@ environment variables), so stock Warp and warpi can coexist on one machine.
 | Native Warp GUI on Linux x86_64 (development build) | **Verified** | window renders under Xvfb + Mesa lavapipe: `standalone/evidence/gui-native-window.png` |
 | End-to-end agent round trip: prompt → local provider → native tool approval card → Run → command output → result back to Pi → second provider request → final text | **Verified** (deterministic loopback fixture) | `standalone/evidence/gui-tool-approval.png`, `gui-round-trip-complete.png`; fixture request captures |
 | Provider settings page (Settings → Agents → Local Pi provider) and **Test connection** (`GET {base}/models`) | **Verified** | `standalone/evidence/gui-provider-settings.png`, `gui-test-connection.png` |
-| Native model picker: every enabled model of every configured profile appears as `standalone:<profile>\|<model>`; selecting one switches the active profile and the model id that newly opened sessions use (an already-open conversation keeps its session; see the roadmap) | **Verified** (GUI, deterministic fixture plus a configured DeepSeek profile) | `standalone/evidence/gui-model-picker-all-providers.png` |
+| Native model picker: every enabled model of every configured profile appears as `standalone:<profile>\|<model>`; selecting one switches the active profile and the model id for the next helper session, and a changed profile/model/key reopens a conversation on its next fresh prompt (see the roadmap) | **Verified** (GUI, deterministic fixture plus a configured DeepSeek profile) | `standalone/evidence/gui-model-picker-all-providers.png` |
 | Per-model enable/disable in the settings page, persisted per profile as `disabled_models`: disabled models never appear in the picker, and the model in use cannot be disabled | **Verified** (GUI) | `standalone/evidence/gui-model-toggle.png` |
 | Prompt queueing: a prompt submitted while a turn is running is queued FIFO at both the app and bridge layers instead of failing; `Ctrl+Alt+Shift+Enter` (`Cmd+Alt+Shift+Enter` on macOS) cancels the running turn and sends the head queued prompt now | **Verified** (automated: app input test, bridge queue tests, vertical-slice FIFO ordering); the keybinding and hints are not yet driven in the GUI | `standalone/ARCHITECTURE.md` §Prompt queueing and cancellation |
 | Turn lifecycle: exactly one result per forwarded tool call (dropped results are synthesized in the same resume), untranslatable calls answered in place, cancel deadline with `RunCancelled` settling as `Finished(Done)`, stall and pending-tool deadlines that free the session | **Verified** (automated stub-helper suites: dropped results, untranslatable calls, cancel settlement) | `standalone/ARCHITECTURE.md` §Turn lifecycle guarantees |
@@ -153,11 +153,10 @@ requests fail with an explicit local error.
 Every enabled model of every configured profile appears in the native model
 picker as `standalone:<profile>|<model>` (for example
 `standalone:deepseek|deepseek-v4-pro`). Picking one switches the active profile
-and the model id that newly opened sessions use, so the endpoint and the wire
-model change for the next conversation that opens a helper session; an
-already-open conversation keeps the endpoint/model it opened with (the model chip
-follows the selection, so it can disagree with the model actually serving that
-conversation — see the roadmap).
+and the model id for the next helper session; a conversation whose profile,
+model, base URL, or key changed reopens on its next fresh prompt (landed 2026-09-23). A
+turn that is already live keeps the endpoint it started on, so the model chip can
+briefly disagree with the model serving that turn — see the roadmap.
 
 The same page lists the active profile's models with an enable/disable toggle.
 Disabled models are persisted per profile as `disabled_models`, never appear in
@@ -250,13 +249,20 @@ behavior, and the exact reject-vs-approximate rules, are in
 Short version; the honest full statement is `standalone/SECURITY.md`.
 
 - **Approvals stay in Warp.** The adapter only emits typed actions. A shell tool
-  call is always labelled `NontrivialLocalChange` and never `is_read_only`;
-  model-supplied risk values are not authorization. **Known gap:** the adapter
-  currently also emits `is_risky: false`, which lets Warp's `AgentDecides`
-  shortcut auto-execute before the redirection/allowlist gate runs; the intended
-  value is `is_risky: true`, and a fix is in progress (uncommitted at the time of
-  writing). Until it lands, the redirection gate is not enforced for Pi shell
-  calls.
+  call is always labelled `NontrivialLocalChange`, never `is_read_only`, and is
+  marked `is_risky: true`; model-supplied risk values are not authorization.
+  Pi cannot classify a command's risk, so marking every shell call risky keeps
+  Warp's denylist, redirection, allowlist, and read-only checks in the path
+  instead of the `AgentDecides` auto-execute shortcut.
+- **Rejections return a definite result.** A rejected shell call is answered
+  with a converted `cancelled` error result (landed 2026-09-23), so the Pi run
+  resumes with an error and the old "run the command again" text is gone; the
+  bridge additionally has a typed `rejected` path for a call that is still
+  pending. Still open: the app-sent error result takes precedence over the typed
+  status, so `rejected` is not guaranteed end-to-end; a lone rejection is not
+  pushed on its own (it is delivered on the next request), and the
+  denial-vs-follow-up ordering is untested. The diff-review Reject path is not
+  wired yet, so a rejected `write`/`edit` still surfaces as a cancelled error.
 - **One origin per profile.** TLS is required for public hosts; plain `http` is
   allowed only for loopback/private endpoints the user typed. Certificate
   validation is never disabled globally.
@@ -272,9 +278,11 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
   ids, and foreign/stale tool results are all validated. A result that matches no
   pending call fails the exchange without consuming state, duplicates are
   ignored, and calls the app drops are closed with a synthesized cancelled error
-  so the Pi run never waits on a promise nobody resolves. Per-result content is
-  truncated; a very large multi-result resume frame can still exceed the 4 MiB
-  frame bound (known gap, fix in progress).
+  so the Pi run never waits on a promise nobody resolves. Per-result content and
+  the aggregate resume frame are bounded (landed 2026-09-23): an oversized batch is
+  truncated, with a marker, and every pending call still gets a result. A
+  malformed helper frame is scoped to its own session (landed 2026-09-23); that path has
+  no dedicated test yet.
 - **Credentials.** Stored in the OS secret store by reference (or, on Linux
   without a Secret Service, in Warp's encrypted `0600` fallback file under the
   state directory); read into an in-memory `SecretString` that redacts itself in
@@ -377,18 +385,17 @@ equivalent of Warp running the approved command).
   not been driven through the GUI. Stopping an already-running command from the
   agent is not wired in v1 (Warp's own block controls still work; `bash_output`
   can only wait).
-- **Queueing caveat**: a prompt submitted while a turn is running is queued FIFO
-  and runs when the turn settles; the send-now keybinding cancels a streaming
-  turn, but it cannot reach a turn that is **paused** on an approval card, so the
-  queued prompt waits for the pending-tool deadline (30 minutes by default;
-  `WARPI_PENDING_TOOL_TIMEOUT_SECS=0` removes the deadline and the automatic
-  release). A fix is in progress but not committed at the time of writing. The
-  send-now keybinding and hints are implemented but not yet driven in the GUI.
-- **Profile/model/key changes** do not apply to a conversation whose helper
-  session is already open (the model chip can show the new selection while
-  inference continues on the old endpoint), and the conversation → Pi session map
-  is written with an unlocked read-modify-write, so concurrent first requests can
-  lose an entry and restart a conversation on a fresh transcript.
+- **Queueing**: a prompt submitted while a turn is running is queued FIFO and
+  runs when the turn settles; the send-now keybinding cancels the running turn —
+  including one paused on an approval card (landed 2026-09-23) — and sends the queued
+  prompt. If the helper never acknowledges the cancel, the cancel deadline
+  settles the turn. The keybinding and hints are implemented but not yet driven
+  in the GUI.
+- **Profile/model/key changes reopen the session on the next fresh prompt**
+  (landed 2026-09-23). A turn or queued prompt that is already live keeps the endpoint it
+  started on, so the model chip can still show the new selection while that turn
+  finishes. The conversation → Pi session map is written under a lock and through
+  a temp-file rename.
 - **MCP** is out of scope for v1 and is not advertised to the model.
 - **Long-running commands**: `bash_output` bounded polling is implemented
   (`workspace.read_shell_command_output`, 1–120 s, default 30 s, cannot write to
@@ -408,7 +415,10 @@ equivalent of Warp running the approved command).
   session open, so a transient provider failure is terminal), the crash-injection
   matrix, a forced-compaction integration test, idle eviction of helper sessions,
   per-session actors for request interleaving, and a full egress audit of the GUI
-  process are all still open (see `standalone/PLAN.md`).
+  process are all still open. A compaction longer than its 600-second deadline is
+  still cancelled, and helper shutdown on app teardown is best-effort (a session
+  whose lock is held is skipped; the helper also exits on stdin EOF). See
+  `standalone/PLAN.md`.
 
 ### Next up (design-level ideas from a third-party review)
 
