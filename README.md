@@ -75,7 +75,7 @@ Start-Process $f
 
 ### macOS (Apple silicon)
 
-1. Open `warpi-macos-aarch64.dmg` and drag **warpi.app** to Applications, or use
+1. Open `warpi-macos-arm64.dmg` and drag **warpi.app** to Applications, or use
    the tarball's `install.sh` for a command-line install.
 2. The app is unsigned, so Gatekeeper blocks the first launch. Allow it once in
    **System Settings → Privacy & Security → Open Anyway**, or:
@@ -86,10 +86,10 @@ Start-Process $f
 Command-line install from the tarball (no sudo, no network):
 
 ```bash
-tar -xzf warpi-macos-aarch64.tar.gz
-./warpi-macos-aarch64/install.sh   # ~/.local/opt/warpi, launcher ~/.local/bin/warpi
+tar -xzf warpi-macos-arm64.tar.gz
+./warpi-macos-arm64/install.sh   # ~/.local/opt/warpi, launcher ~/.local/bin/warpi
 # or run in place:
-./warpi-macos-aarch64/warpi
+./warpi-macos-arm64/warpi
 ```
 
 ### Linux (x86_64)
@@ -204,7 +204,7 @@ so the model chip can briefly disagree with the model serving that turn.
   required.** See the runtime selection rule in `standalone/ARCHITECTURE.md` and
   `standalone/WINDOWS.md` §8.
 - **Artifacts.** CI produces `WarpiSetup.exe` (Windows),
-  `warpi-macos-aarch64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz`
+  `warpi-macos-arm64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz`
   (Linux), each with a build-provenance attestation instead of code signing.
   Assembly/installer/dmg, attestation, and upload run **before** the
   adapter-test step in every job, so a failing test does not block the artifacts
@@ -309,7 +309,7 @@ repository. `Not verified` and `Deferred` are used deliberately.
 | Cost / pricing display | **Deferred** — no preset prices ship, so the footer omits USD | `app/src/ai/standalone/usage_model.rs` |
 | TUI wired to the standalone backend | **Deferred** — the upstream headless TUI builds as `warpi-tui` (`script/run-tui`) but is not connected to the local backend | `script/run-tui` |
 | MCP tools, `bash_write`/`bash_cancel`, file deletion | **Deferred** by design; not advertised to the model | `standalone/PROVIDER_COMPATIBILITY.md` |
-| Release packaging (CI-produced artifacts) | **Wired, CI-only for Linux/macOS; verified on Windows** — CI produces `WarpiSetup.exe` (Windows), `warpi-macos-aarch64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz` (Linux), each with a GitHub build-provenance attestation rather than code signing, and each shipping the pinned Node 22.19.0. The Windows installer was built and installed successfully on a real host; the Linux/macOS packaging scripts have not been run on those platforms. | `standalone/VALIDATION.md`, `.github/workflows/warpi-build.yml` |
+| Release packaging (CI-produced artifacts) | **Wired, CI-only for Linux/macOS; verified on Windows** — CI produces `WarpiSetup.exe` (Windows), `warpi-macos-arm64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz` (Linux), each with a GitHub build-provenance attestation rather than code signing, and each shipping the pinned Node 22.19.0. The Windows installer was built and installed successfully on a real host; the Linux/macOS packaging scripts have not been run on those platforms. | `standalone/VALIDATION.md`, `.github/workflows/warpi-build.yml` |
 
 **Test inventory (0.1.0 source).** `cargo test -p standalone_agent -- --list`
 reports **156 test functions** — 117 unit (`usage_ledger` 26, `bridge` 24,

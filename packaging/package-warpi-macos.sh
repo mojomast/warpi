@@ -94,12 +94,12 @@ else
 fi
 [ -f "$PKG_DIR/standalone/node/bin/node" ] || fail "bundled Node runtime is missing: $PKG_DIR/standalone/node/bin/node"
 
+# CLI archive.
+tar -C "$DIST_ROOT" -czf "$DIST_ROOT/warpi-macos-$ARCH.tar.gz" "warpi-macos-$ARCH"
+
 if [ "${WARPI_SKIP_CHECKSUMS:-0}" != "1" ] && command -v shasum >/dev/null 2>&1; then
     (cd "$DIST_ROOT" && shasum -a 256 "warpi-macos-$ARCH.tar.gz" >"warpi-macos-$ARCH.tar.gz.sha256")
 fi
-
-# CLI archive.
-tar -C "$DIST_ROOT" -czf "$DIST_ROOT/warpi-macos-$ARCH.tar.gz" "warpi-macos-$ARCH"
 
 # GUI app bundle + disk image, when the macOS tooling is present.
 if [ "${WARPI_SKIP_DMG:-0}" != "1" ] && command -v hdiutil >/dev/null 2>&1; then

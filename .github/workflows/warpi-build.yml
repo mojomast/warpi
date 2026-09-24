@@ -214,17 +214,17 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/warpi-macos-aarch64.tar.gz
-            dist/warpi-macos-aarch64.dmg
+            dist/warpi-macos-arm64.tar.gz
+            dist/warpi-macos-arm64.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: warpi-macos-aarch64
           path: |
-            dist/warpi-macos-aarch64.tar.gz
-            dist/warpi-macos-aarch64.tar.gz.sha256
-            dist/warpi-macos-aarch64.dmg
+            dist/warpi-macos-arm64.tar.gz
+            dist/warpi-macos-arm64.tar.gz.sha256
+            dist/warpi-macos-arm64.dmg
           if-no-files-found: error
           retention-days: 14
 
