@@ -425,7 +425,11 @@ impl View for AgentViewZeroStateBlock {
             }
 
             HeaderProps {
-                title: "New Warp Agent conversation".into(),
+                title: if crate::standalone_ui::hidden_ui() {
+                    "New agent conversation".into()
+                } else {
+                    "New Warp Agent conversation".into()
+                },
                 description: AgentViewDescription::PlainText(vec![local_description.into()]),
                 icon: IconWithStatusVariant::OzAgent {
                     status: None,

@@ -297,21 +297,46 @@ impl LocalProviderPageView {
         }
         match standalone::upsert_profile(profile) {
             Ok(()) => {
-                let mut config = standalone::current_config().unwrap_or_default();
-                config.enabled = self.enabled;
-                if let Err(error) = standalone::write_config(&config) {
-                    self.set_status(format!("Could not save the configuration: {error}"), true);
-                } else {
-                    // Refresh the model picker/chip so the local model shows up
-                    // immediately, without a restart.
-                    crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
-                        preferences.rebuild_standalone_llms(ctx);
-                    });
-                    self.set_status(
-                        "Saved. The next agent request uses this endpoint; no restart needed.",
-                        false,
-                    );
-                }
+                // `upsert_profile` enables standalone mode. The explicit mode
+                // switch is `LocalProviderAction::ToggleEnabled`; Save must not
+                // re-apply a stale `enabled` flag or a freshly configured
+                // provider would stay on the Warp-account path.
+                self.enabled = true;
+                // Refresh the model picker/chip so the local model shows up
+                // immediately, without a restart.
+                crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
+                    preferences.rebuild_standalone_llms(ctx);
+                });
+                self.set_status(
+                    "Saved. The next agent request uses this endpoint; no restart needed.",
+                    false,
+                );
+            }
+            Err(error) => {
+                self.set_status(format!("Could not save the configuration: {error}"), true)
+            }
+        }
+        ctx.notify();
+    }
+
+    /// Persist an explicit enable/disable of standalone mode. Distinct from
+    /// [`Self::save`]: it keeps the mode exactly as chosen and never rewrites
+    /// the configured profiles.
+    fn set_enabled(&mut self, enabled: bool, ctx: &mut ViewContext<Self>) {
+        match standalone::set_enabled(enabled) {
+            Ok(()) => {
+                self.enabled = enabled;
+                crate::ai::llms::LLMPreferences::handle(ctx).update(ctx, |preferences, ctx| {
+                    preferences.rebuild_standalone_llms(ctx);
+                });
+                self.set_status(
+                    if enabled {
+                        "Standalone mode enabled."
+                    } else {
+                        "Standalone mode disabled."
+                    },
+                    false,
+                );
             }
             Err(error) => {
                 self.set_status(format!("Could not save the configuration: {error}"), true)
@@ -1034,10 +1059,7 @@ impl TypedActionView for LocalProviderPageView {
                 }
                 ctx.notify();
             }
-            LocalProviderAction::ToggleEnabled => {
-                self.enabled = !self.enabled;
-                self.save(ctx);
-            }
+            LocalProviderAction::ToggleEnabled => self.set_enabled(!self.enabled, ctx),
             LocalProviderAction::ToggleAuthMode => {
                 self.use_api_key = !self.use_api_key;
                 ctx.notify();

@@ -629,6 +629,18 @@ fn requires_post_onboarding_login(
         && (FeatureFlag::AccountFirstOnboarding.is_enabled() || ai_enabled || warp_drive_enabled)
 }
 
+/// Whether completing onboarding must route the user through a Warp login.
+/// Standalone onboarding (the local Pi backend) never requires a Warp account, so
+/// it skips the login slide regardless of the account-first flag or AI intent.
+fn requires_login_after_onboarding(
+    standalone: bool,
+    is_logged_in: bool,
+    ai_enabled: bool,
+    warp_drive_enabled: bool,
+) -> bool {
+    !standalone && requires_post_onboarding_login(is_logged_in, ai_enabled, warp_drive_enabled)
+}
+
 /// Replaces the settings and tutorial snapshots consumed when post-auth
 /// onboarding eventually completes.
 ///
@@ -2653,7 +2665,12 @@ impl RootView {
                 let target = target.clone();
                 let onboarding_view = onboarding_view.clone();
                 let account_first = FeatureFlag::AccountFirstOnboarding.is_enabled();
-                if !account_first {
+                // The local Pi backend needs no Warp account, so standalone
+                // onboarding never drives the user toward login. It still has to
+                // persist the local completion flag the account-first path would
+                // otherwise only set when a login is skipped.
+                let standalone = crate::standalone_ui::hidden_ui();
+                if !account_first || standalone {
                     mark_local_onboarding_completed(ctx);
                     if FeatureFlag::HOAOnboardingFlow.is_enabled() {
                         mark_hoa_onboarding_completed(ctx);
@@ -2666,8 +2683,12 @@ impl RootView {
                 let ai_enabled = selected_settings.is_ai_enabled();
                 let warp_drive_enabled = selected_settings.is_warp_drive_enabled();
                 // With old onboarding, we ask user to log in before onboarding, so don't do it after onboarding completes.
-                let requires_login =
-                    requires_post_onboarding_login(is_logged_in, ai_enabled, warp_drive_enabled);
+                let requires_login = requires_login_after_onboarding(
+                    standalone,
+                    is_logged_in,
+                    ai_enabled,
+                    warp_drive_enabled,
+                );
 
                 if requires_login {
                     refresh_pending_onboarding_choices(

@@ -16,7 +16,8 @@ use super::{
     AccountFirstCompletion, AuthOnboardingState, AuthOnboardingTarget,
     HAS_COMPLETED_ONBOARDING_KEY, NewWorkspaceSource, RootView, WorkspaceArgs,
     has_completed_local_onboarding, offer_variant_for_account_class,
-    refresh_pending_onboarding_choices, requires_post_onboarding_login,
+    refresh_pending_onboarding_choices, requires_login_after_onboarding,
+    requires_post_onboarding_login,
 };
 use crate::GlobalResourceHandles;
 use crate::appearance::Appearance;
@@ -91,6 +92,17 @@ fn fallback_flow_only_requires_login_for_account_backed_settings() {
     assert!(!requires_post_onboarding_login(false, false, false));
     assert!(requires_post_onboarding_login(false, true, false));
     assert!(requires_post_onboarding_login(false, false, true));
+}
+
+#[test]
+fn standalone_onboarding_never_requires_login() {
+    let _account_first = FeatureFlag::AccountFirstOnboarding.override_enabled(true);
+
+    // Upstream: a logged-out account-first user is driven to login…
+    assert!(requires_login_after_onboarding(false, false, true, true));
+    // …but standalone (no Warp account) completes straight into the workspace.
+    assert!(!requires_login_after_onboarding(true, false, true, true));
+    assert!(!requires_login_after_onboarding(true, false, false, false));
 }
 
 #[test]

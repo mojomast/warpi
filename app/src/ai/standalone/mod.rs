@@ -123,6 +123,12 @@ impl StandaloneConfig {
         self.profiles.iter().find(|p| p.id == id)
     }
 
+    /// Return this config with the mode switch set, preserving every profile.
+    fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
     /// Fold the legacy single-profile form into the profile list.
     fn normalized(mut self) -> Self {
         if let Some(legacy) = self.legacy_profile.take()
@@ -316,11 +322,10 @@ pub fn set_active_profile(id: &str) -> anyhow::Result<()> {
     write_config(&config)
 }
 
-/// Insert or replace a profile and persist it, keeping the active selection.
-pub fn upsert_profile(profile: ProviderProfile) -> anyhow::Result<()> {
-    let mut config = StandaloneConfig::load()
-        .map(StandaloneConfig::normalized)
-        .unwrap_or_default();
+/// Fold an upserted profile into the config: the profile becomes active and
+/// standalone mode is enabled, because configuring a provider is the user's
+/// opt-in to the local backend. Pure so the enable-on-save contract is testable.
+fn apply_upsert(mut config: StandaloneConfig, profile: ProviderProfile) -> StandaloneConfig {
     config.enabled = true;
     match config
         .profiles
@@ -331,6 +336,26 @@ pub fn upsert_profile(profile: ProviderProfile) -> anyhow::Result<()> {
         None => config.profiles.push(profile.clone()),
     }
     config.active_profile = profile.id.clone();
+    config
+}
+
+/// Insert or replace a profile and persist it. Standalone mode is enabled as a
+/// side effect: a user who configures a provider intends to use it.
+pub fn upsert_profile(profile: ProviderProfile) -> anyhow::Result<()> {
+    let config = StandaloneConfig::load()
+        .map(StandaloneConfig::normalized)
+        .unwrap_or_default();
+    write_config(&apply_upsert(config, profile))
+}
+
+/// Enable or disable standalone mode, preserving every configured profile.
+/// This is the explicit mode switch, distinct from [`upsert_profile`], which
+/// always enables.
+pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
+    let config = StandaloneConfig::load()
+        .map(StandaloneConfig::normalized)
+        .unwrap_or_default()
+        .with_enabled(enabled);
     write_config(&config)
 }
 
@@ -1625,6 +1650,34 @@ mod tests {
             headers: Default::default(),
             pricing: Default::default(),
         }
+    }
+
+    /// Regression: saving a provider profile must enable the local backend.
+    /// The settings page used to re-apply a stale `enabled = false` after the
+    /// upsert, so a fresh install with a configured profile and API key stayed
+    /// on the Warp-account path and told the user to create an account.
+    #[test]
+    fn upserting_a_profile_enables_standalone_mode() {
+        let config = apply_upsert(StandaloneConfig::default(), test_profile("m"));
+        assert!(
+            config.enabled,
+            "configuring a provider is the opt-in to the local backend"
+        );
+        assert_eq!(config.active_profile, "p");
+        assert_eq!(config.profiles.len(), 1);
+        assert_eq!(config.active().map(|p| p.id.as_str()), Some("p"));
+    }
+
+    #[test]
+    fn toggling_standalone_mode_keeps_configured_profiles() {
+        let enabled = apply_upsert(StandaloneConfig::default(), test_profile("m"));
+        let disabled = enabled.clone().with_enabled(false);
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.profiles.len(), 1, "a disable keeps the profiles");
+        assert!(disabled.active().is_some());
+        let re_enabled = disabled.with_enabled(true);
+        assert!(re_enabled.enabled);
+        assert_eq!(re_enabled.active_profile, "p");
     }
 
     fn test_request_config(
