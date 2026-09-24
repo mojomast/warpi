@@ -42,23 +42,84 @@ the agent's brain to an endpoint **you** choose:
   card, deny/allow rules, allowlist, redirection checks, and read-only checks
   decide and execute.
 
-It is for people who are comfortable building from source and running an early
-development build, and who would rather see an honest status table than a
-marketing page. CI produces installable artifacts for **Linux x86_64 and
-Windows x86_64**, each accompanied by a GitHub **build-provenance attestation** —
-provenance, not code signing (there is no Authenticode certificate and no GPG
-key). It is not sandboxed, and the Windows GUI is not (yet) verified (see
-[Limitations](#limitations-and-not-yet-verified)).
+It is for people who want Warp's UI backed by their own model, and who would
+rather see an honest status table than a marketing page. Prebuilt artifacts are
+produced by CI for **Windows x86_64**, **macOS (Apple silicon)**, and **Linux
+x86_64**, each accompanied by a GitHub **build-provenance attestation** —
+provenance, not code signing (there is no Authenticode certificate, no Apple
+notarization, and no GPG key). The Windows build is verified end to end on a
+real host; macOS packaging is wired but unverified. See [Install](#install) and
+[Limitations](#limitations-and-not-yet-verified).
 
-## Quick start (Linux x86_64)
+## Install
 
-The verified configuration is a **Linux x86_64 development build**. Prerequisites
-are the same as upstream Warp: Rust `1.92.0` from `rust-toolchain.toml`,
-`protoc` >= 3.15, `cmake`, `pkg-config`, a C/C++ toolchain, ALSA development
-headers for the GUI feature (`libasound2-dev` on Debian/Ubuntu), and **Node >=
-22.19** for the helper. (The audit machine has no `sudo`; `standalone/dev-env.sh`
-provides protoc/cmake/ALSA shims and is a development convenience, not part of
-the product.)
+Download the artifacts from
+[Releases](https://github.com/mojomast/warpi/releases). They are **unsigned** and
+carry a GitHub build-provenance attestation; compare the published `.sha256`
+before running anything. All bundles ship the private Pi helper and a pinned
+Node.js 22.19.0 runtime, so a fresh install needs no separate Node install.
+
+### Windows (x86_64)
+
+1. Run `WarpiSetup.exe` (per-user install, `PrivilegesRequired=lowest`).
+2. Windows SmartScreen may warn because the installer is unsigned; provenance is
+   the attestation, not Authenticode.
+3. Launch **warpi**, open Agent Mode, and add a provider (below).
+
+```powershell
+# verify then run
+$f = "$env:USERPROFILE\Downloads\WarpiSetup.exe"
+(Get-FileHash $f -Algorithm SHA256).Hash   # compare with WarpiSetup.exe.sha256
+Start-Process $f
+```
+
+### macOS (Apple silicon)
+
+1. Open `warpi-macos-aarch64.dmg` and drag **warpi.app** to Applications, or use
+   the tarball's `install.sh` for a command-line install.
+2. The app is unsigned, so Gatekeeper blocks the first launch. Allow it once in
+   **System Settings → Privacy & Security → Open Anyway**, or:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/warpi.app
+   ```
+
+Command-line install from the tarball (no sudo, no network):
+
+```bash
+tar -xzf warpi-macos-aarch64.tar.gz
+./warpi-macos-aarch64/install.sh   # ~/.local/opt/warpi, launcher ~/.local/bin/warpi
+# or run in place:
+./warpi-macos-aarch64/warpi
+```
+
+### Linux (x86_64)
+
+```bash
+tar -xzf warpi-linux-x86_64.tar.gz
+cd warpi-linux-x86_64
+sha256sum -c SHA256SUMS            # bundle integrity
+./install.sh                       # ~/.local/opt/warpi, launcher ~/.local/bin/warpi
+# or run in place:
+./warpi
+```
+
+`install.sh` installs the binary, the helper, and the bundled Node runtime under
+`~/.local/opt/warpi`, writes a `warpi` launcher to `~/.local/bin`, and (on Linux)
+registers a desktop entry and icons. It never uses `sudo` or the network.
+
+### Run the CLI
+
+The launcher (`warpi`) starts the GUI. The headless TUI binary (`warpi-tui`)
+builds but is **not yet wired to the local backend** and is gated behind a Warp
+login — it is not part of the supported install yet (see
+[Roadmap](#roadmap)). Everything else in the app is reached through the GUI.
+
+### Build from source (all platforms)
+
+Prerequisites match upstream Warp: Rust `1.92.0` from `rust-toolchain.toml`,
+`protoc` >= 3.15, `cmake`, `pkg-config`, a C/C++ toolchain, and ALSA headers
+(`libasound2-dev` on Debian/Ubuntu) for the `gui` feature. Node >= 22.19 builds
+the helper; the packaging scripts stage the pinned runtime that ships at runtime.
 
 ```bash
 # 1. Build the private Pi helper
@@ -73,8 +134,18 @@ target/debug/warpi
 ```
 
 The app finds the helper at `standalone/pi-helper/dist/main.js` relative to the
-executable (or via `WARPI_PI_HELPER_ENTRY`). If the helper is missing, agent
+executable (or via `WARPI_PI_HELPER_ENTRY`) and the runtime at
+`standalone/node/` (or `node` on `PATH`). If the helper is missing, agent
 requests fail with an explicit local error.
+
+To produce a distributable bundle from a source build:
+
+```bash
+# Linux (needs the pinned Node runtime; the script fetches and verifies it)
+bash packaging/package-warpi.sh            # -> dist/warpi-linux-<arch>/
+# macOS
+bash packaging/package-warpi-macos.sh      # -> dist/warpi-macos-<arch>/{,*.tar.gz,*.dmg}
+```
 
 ### Add a provider and a key
 
@@ -118,30 +189,26 @@ A conversation whose profile, model, base URL, or key changed reopens on its
 next fresh prompt. A turn that is already live keeps the endpoint it started on,
 so the model chip can briefly disagree with the model serving that turn.
 
-### Files, config, and the optional bundle
+### Files, config, and data locations
 
-- **Config file (Linux default):**
-  `~/.local/share/warpi/standalone/config.json` (`$XDG_DATA_HOME/warpi/...` when
-  `XDG_DATA_HOME` is set), or any path via `WARPI_STANDALONE_CONFIG`.
+- **Config file** (per-platform; `WARPI_STANDALONE_CONFIG` overrides):
+  - Linux: `~/.local/share/warpi/standalone/config.json`
+    (`$XDG_DATA_HOME/warpi/...` when set)
+  - macOS: `~/Library/Application Support/dev.warpi.warpi/standalone/config.json`
+  - Windows: `%APPDATA%\warpi\Warpi\data\standalone\config.json`
 - **Conversation and usage state:** under the same data directory
   (`session-map.json`, the usage ledger, and the helper scratch dir).
-- **Packaged development bundle (optional).** Instead of running from
-  `target/debug/`:
-
-  ```bash
-  cargo build -p warp --bin warpi --features gui
-  bash packaging/package-warpi.sh
-  ./dist/warpi-linux-x86_64/install.sh   # ~/.local/opt/warpi, launcher in ~/.local/bin/warpi
-  ```
-
-  `packaging/package-warpi.sh` never uses `sudo` or the network and refuses to
-  run unless the binary and built helper are present. The bundle carries the
-  helper's production `node_modules`, so **Node >= 22.19 must be on `PATH`** at
-  runtime. The CI workflow produces the installable Linux tarball and the Windows
-  `WarpiSetup.exe`, each with a build-provenance attestation instead of code
-  signing; assembly runs **before** the adapter-test step in both jobs, so a
-  failing test does not block the artifacts (see
-  [Limitations](#limitations-and-not-yet-verified)).
+- **Bundled runtime.** Release installs ship a pinned Node.js 22.19.0 next to the
+  executable and the app prefers it; an explicit `helper_executable` overrides,
+  and a development tree falls back to `node` on `PATH`. **Node >= 22.19 is
+  required.** See the runtime selection rule in `standalone/ARCHITECTURE.md` and
+  `standalone/WINDOWS.md` §8.
+- **Artifacts.** CI produces `WarpiSetup.exe` (Windows),
+  `warpi-macos-aarch64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz`
+  (Linux), each with a build-provenance attestation instead of code signing.
+  Assembly/installer/dmg, attestation, and upload run **before** the
+  adapter-test step in every job, so a failing test does not block the artifacts
+  (see [Limitations](#limitations-and-not-yet-verified)).
 - **Optional extra: DpQuake fonts.** Two decorative Quake fonts ship in
   `standalone/fonts/DpQuake/` but are never selected by default.
   `standalone/scripts/install-quake-fonts.sh` installs them into the user font
@@ -235,13 +302,14 @@ repository. `Not verified` and `Deferred` are used deliberately.
 | About page: warpi wordmark, `v0.1.0`, repository link, and fork-first copyright | **Verified** | `docs/assets/about-0.1.0.png` |
 | Diff review / file-edit (`write`/`edit`) flow driven in the GUI | **Not verified** — wired to `ApplyFileDiffs` and tested at the event level | `standalone/VALIDATION.md` |
 | Conversation restart / idle restore driven in the GUI | **Not verified** — the conversation → Pi session mapping is durable | `standalone/VALIDATION.md` |
-| Windows / macOS native build and GUI | **Not verified** — see [Limitations](#limitations-and-not-yet-verified) | `standalone/WINDOWS.md`, `.github/workflows/warpi-build.yml` |
+| Windows native build, GUI, installer, and agent round trip | **Verified** on a real Windows 10 host: MSVC release build, per-user install, prompt → tool approval → command output → final text, with the helper launched from the bundled Node 22.19.0 | `standalone/WINDOWS.md` §8, `standalone/VALIDATION.md` |
+| macOS native build, GUI, and installer | **Not verified** — packaging and CI are wired only | `packaging/package-warpi-macos.sh`, `.github/workflows/warpi-build.yml` |
 | Subagents (`task` tool) | **Deferred** — the Rust adapter and helper code are merged but **inert by default**: a session only gets the tool when the config sets `subagents.enabled` **and** the helper advertises the `subagents` capability (and the process default `WARPI_SUBAGENTS` is an escape hatch). Not part of the v1 feature set | `crates/standalone_agent/tests/subagents_forwarding.rs`, `standalone/pi-helper/test/subagents.test.ts` |
 | Durable prompt queue and event-log delivery | **Deferred to 0.1.1** — `journal.rs`/`event_log.rs` are merged but have **no callers**; the 0.1.0 prompt queue is in-memory | `standalone/PLAN.md`, Roadmap below |
 | Cost / pricing display | **Deferred** — no preset prices ship, so the footer omits USD | `app/src/ai/standalone/usage_model.rs` |
 | TUI wired to the standalone backend | **Deferred** — the upstream headless TUI builds as `warpi-tui` (`script/run-tui`) but is not connected to the local backend | `script/run-tui` |
 | MCP tools, `bash_write`/`bash_cancel`, file deletion | **Deferred** by design; not advertised to the model | `standalone/PROVIDER_COMPATIBILITY.md` |
-| Release packaging (CI-produced artifacts) | **Wired, CI-only** — CI produces the Linux `warpi-linux-x86_64.tar.gz` (+ `.sha256`) and the Windows `WarpiSetup.exe`, each with a GitHub build-provenance attestation rather than code signing. Assembly, installer build, attestation, and upload all run **before** the adapter-test step, so a failing test cannot cost us the artifacts. The Windows installer has never been compiled or run locally. Both bundlers' stale `oss` channel was replaced with `warpi` | `standalone/VALIDATION.md`, `standalone/WINDOWS.md`, `.github/workflows/warpi-build.yml` |
+| Release packaging (CI-produced artifacts) | **Wired, CI-only for Linux/macOS; verified on Windows** — CI produces `WarpiSetup.exe` (Windows), `warpi-macos-aarch64.{dmg,tar.gz}` (macOS), and `warpi-linux-x86_64.tar.gz` (Linux), each with a GitHub build-provenance attestation rather than code signing, and each shipping the pinned Node 22.19.0. The Windows installer was built and installed successfully on a real host; the Linux/macOS packaging scripts have not been run on those platforms. | `standalone/VALIDATION.md`, `.github/workflows/warpi-build.yml` |
 
 **Test inventory (0.1.0 source).** `cargo test -p standalone_agent -- --list`
 reports **156 test functions** — 117 unit (`usage_ledger` 26, `bridge` 24,
@@ -388,36 +456,26 @@ Short version; the honest full statement is `standalone/SECURITY.md`.
 
 ## Limitations and not-yet-verified
 
-- **Windows: artifacts are built independently of the adapter tests; the fixture
-  root cause is unverified.** CI run `35931719012` passed the Linux job end to
-  end and, on Windows, passed checkout, pinned `protoc` + cmake, the helper
-  build/tests, the release `warpi.exe` build, and every unit and stub-helper
-  adapter test. The adapter step then failed in `transcript_repair` — after the
-  previous run (`35879868946`) had already scoped out `session_isolation`, which
-  showed that suite was only the first symptom: the helper's first request to the
-  cross-process Node fixture (`standalone/pi-helper/test/serve-fixture.ts`)
-  reports `provider_error: "Connection error."` on Windows while the same suites
-  pass on Linux. The root cause is not reproducible off Windows and remains
-  **unverified — tracked for 0.1.1**. All fixture-based tests are now scoped by a
-  single `fixture_test!` macro (`crates/standalone_agent/tests/support/mod.rs`)
-  that marks them `#[ignore]` on Windows with a tracked reason; unit tests,
-  stub-helper tests, and every other non-fixture test keep running and enforcing,
-  with no blanket `continue-on-error` / `--no-fail-fast`. Because the Windows
-  bundle staging, Inno Setup `WarpiSetup.exe` build, provenance attestation, and
-  artifact upload now run **before** the adapter-test step, a failing test cannot
-  cost us the artifacts — but the installer has still never been produced or run
-  here. See `standalone/WINDOWS.md`.
-- **macOS: entirely unverified.** There is no macOS host in this work. The
-  bundle identity, icon (`app/channels/warpi/icon/icon.icns`), and
-  menu/metadata wiring are present **by construction only**.
-- **Packaging and provenance.** CI produces installable artifacts for **Linux
-  and Windows** — the Linux `warpi-linux-x86_64.tar.gz` (with a `.sha256`) and
-  the Windows `WarpiSetup.exe` — each accompanied by a GitHub **build-provenance
-  attestation**, not code signing: there is no Authenticode certificate and no
-  GPG key. Assembly, installer build, attestation, and upload run **before** the
-  adapter-test step in both jobs, so the artifacts are produced even when a test
-  fails (the job still ends red). `packaging/package-warpi.sh` remains a no-sudo,
-  no-network development convenience, and the Windows installer has not been run.
+- **Windows: verified end to end; one CI caveat.** On a real Windows 10 host the
+  MSVC release build, the per-user installer, and the full GUI agent round trip
+  (prompt → tool approval → command output → final text) were reproduced, with
+  the helper launched from the bundled Node 22.19.0. The `ncrypto::CSPRNG`
+  startup abort was root-caused to a helper environment that omitted
+  `SystemRoot` (fixed) and to Node 24 rejecting the `\\?\` verbatim helper entry
+  path that `canonicalize()` produces (fixed); the Windows fixture tests are no
+  longer scoped and run on Windows. The one-off `provider_error: "Connection
+  error."` from an earlier CI run was not reproduced as such — the next CI run
+  confirms. See `standalone/WINDOWS.md` §8.
+- **macOS: unverified.** There is no macOS host in this work. The bundle
+  identity, icon (`app/channels/warpi/icon/icon.icns`),
+  `packaging/package-warpi-macos.sh`, and the `macos-aarch64` CI job are wired
+  **by construction only** and have never been run end to end.
+- **Packaging and provenance.** All artifacts are **unsigned** and carry a GitHub
+  **build-provenance attestation** instead of code signing: there is no
+  Authenticode certificate, no Apple notarization, and no GPG key. Bundles ship
+  the pinned Node 22.19.0. Windows install and the agent round trip are verified
+  on a real host; the Linux and macOS packagers are wired, but their assembled
+  artifacts and `install.sh` have not been exercised on those platforms here.
 - **GUI flows not driven.** The diff-review (`write`/`edit`) flow, restart/idle
   restore, and the send-now keypress are not exercised in the GUI. The last
   recorded full test runs predate the newest suites (see

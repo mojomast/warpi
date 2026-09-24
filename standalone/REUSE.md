@@ -85,7 +85,9 @@ app/src/terminal/input.rs           Send-queued-prompt-now keybinding + hints
 app/src/terminal/view/queued_prompts_panel.rs  Queued-prompt panel header hint
 app/src/bin/warpi.rs                warpi GUI entry point
 standalone/**                       Docs, helper, evidence, dev shims
-packaging/package-warpi.sh          No-sudo development bundle
+packaging/package-warpi.sh          No-sudo development bundle (Linux)
+packaging/package-warpi-macos.sh    macOS bundle + CLI tarball + .dmg
+script/fetch-node-runtime.sh        Fetch/SHA-256-verify/stage the bundled Node runtime (Linux/macOS)
 script/windows/fetch-node-runtime.ps1  Fetch, SHA-256-verify, and stage the bundled Node runtime
 .github/workflows/warpi-build.yml   Linux/Windows CI job (not run yet)
 ```

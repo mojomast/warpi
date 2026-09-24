@@ -6,7 +6,9 @@
 # Run evidence: run 35879868946 (commit 01ec580d) executed both jobs on
 # GitHub-hosted runners.
 #   - Linux x86_64: every step passed — release build, the Rust adapter tests,
-#     packaging/package-warpi.sh, and artifact upload.
+#     packaging/package-warpi.sh, and artifact upload. (package-warpi.sh now also
+#     stages the pinned Node runtime; the fetch script is verified on Windows but
+#     this has not been re-run on the Linux runner.)
 #   - Windows x86_64: checkout, pinned protoc + Chocolatey cmake, the Pi helper
 #     build/tests, and the release warpi.exe build passed. Earlier runs saw the
 #     Rust adapter tests fail deterministically on the cross-process Node fixture
@@ -40,8 +42,9 @@
 # Recommends it), so google/protobuf/descriptor.proto was missing; installing it
 # and setting PROTOC_INCLUDE explicitly is now verified by run 35879868946.
 # Still UNVERIFIED:
-#   * the GUI build, installer install, and agent round trip on Windows (the
-#     local validation host has no MSVC/Windows SDK; the release ABI is MSVC);
+#   * the macOS job and packaging/package-warpi-macos.sh (never run; no macOS host);
+#   * the Linux bundle with the newly-bundled Node runtime (the fetch script is
+#     verified on Windows; the assembled Linux tarball is not);
 #   * packaging/package-warpi.sh's `npm ci --omit=dev --offline` path relies on
 #     a warm npm cache (setup-node's cache); if that fails the script falls back
 #     to copying the full node_modules, which no runner has exercised;
@@ -152,6 +155,79 @@ jobs:
       # Runs last on purpose: the artifact above is already attested and
       # uploaded, so a failing adapter test turns the job red without costing us
       # the artifact. No blanket `continue-on-error` / `--no-fail-fast`.
+      - name: Test the Rust adapter
+        run: cargo test -p standalone_agent
+
+  # UNVERIFIED: never executed. Modeled on the Linux job. macOS packaging is new
+  # (packaging/package-warpi-macos.sh) and the bundle identity/icon are present
+  # by construction only; see standalone/WINDOWS.md and README "Limitations".
+  # macos-14 is Apple silicon (arm64); Intel Macs build from source.
+  macos-aarch64:
+    name: macOS aarch64
+    runs-on: macos-14
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      GIT_RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies (protobuf, cmake)
+        run: brew install protobuf cmake
+
+      - name: Install Rust 1.92.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.19"
+          cache: npm
+          cache-dependency-path: standalone/pi-helper/package-lock.json
+
+      - name: Build and test the Pi helper
+        working-directory: standalone/pi-helper
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Build warpi (release)
+        env:
+          CARGO_BIN_NAME: warpi
+          WARP_APP_NAME: Warpi
+        run: cargo build --locked -p warp --bin warpi --features gui --release
+
+      # Stages the pinned Node runtime (script/fetch-node-runtime.sh) and, on the
+      # macOS runner, builds both the CLI tarball and a drag-to-Applications .dmg.
+      - name: Assemble the macOS bundle
+        run: bash packaging/package-warpi-macos.sh
+
+      - name: Attest macOS artifact provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/warpi-macos-aarch64.tar.gz
+            dist/warpi-macos-aarch64.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warpi-macos-aarch64
+          path: |
+            dist/warpi-macos-aarch64.tar.gz
+            dist/warpi-macos-aarch64.tar.gz.sha256
+            dist/warpi-macos-aarch64.dmg
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Test the Rust adapter
         run: cargo test -p standalone_agent
 

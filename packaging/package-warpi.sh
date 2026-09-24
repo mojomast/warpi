@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # package-warpi.sh — assemble a Linux development bundle for warpi.
 #
-# This script only copies files that already exist. It does not build anything,
-# does not use sudo, and does not use the network. Before running it:
+# This script only copies files that already exist (it does not build anything)
+# and stages the pinned Node runtime. Before running it:
 #
 #   cargo build -p warp --bin warpi --features gui         # -> target/debug/warpi
 #   (cd standalone/pi-helper && npm ci && npm run build)   # -> dist/main.js
 #
 # Output: dist/warpi-linux-<arch>/ containing the warpi binary, the private Pi
-# helper (dist, package metadata, and its production node_modules), the
-# standalone/*.md documentation, license files, an example config, an install.sh,
-# and SHA256SUMS.
+# helper (dist, package metadata, and its production node_modules), the pinned
+# Node runtime (standalone/node/bin/node), the standalone/*.md documentation,
+# license files, an example config, an install.sh, and SHA256SUMS.
 #
 # Environment overrides:
 #   WARPI_BINARY      binary to package       (default: <repo>/target/debug/warpi)
 #   WARPI_DIST_DIR    output root             (default: <repo>/dist)
 #   WARPI_ARCH        architecture label      (default: uname -m)
+#   WARPI_NODE_RUNTIME  pre-fetched Node dir to copy instead of downloading
 #   WARPI_SKIP_CHECKSUMS=1  do not write SHA256SUMS
 
 set -euo pipefail
@@ -92,6 +93,23 @@ fi
 
 [ -f "$STAGE_HELPER/node_modules/@earendil-works/pi-coding-agent/package.json" ] \
     || fail "staged helper is missing the Pi SDK; run npm ci in standalone/pi-helper and retry"
+
+# Pinned Node runtime next to the executable, matching the app's selection rule
+# (<package>/standalone/node/bin/node). Prefer a pre-fetched runtime when
+# WARPI_NODE_RUNTIME is set so the packaging step can stay offline.
+case "$ARCH" in
+    x86_64 | amd64) NODE_ARCH="x64" ;;
+    aarch64 | arm64) NODE_ARCH="arm64" ;;
+    *) fail "unsupported architecture for the bundled Node runtime: $ARCH" ;;
+esac
+if [ -n "${WARPI_NODE_RUNTIME:-}" ]; then
+    mkdir -p "$PKG_DIR/standalone/node/bin"
+    cp -a "$WARPI_NODE_RUNTIME/." "$PKG_DIR/standalone/node/"
+else
+    "$REPO_ROOT/script/fetch-node-runtime.sh" --platform linux --arch "$NODE_ARCH" --dest "$PKG_DIR/standalone/node"
+fi
+[ -f "$PKG_DIR/standalone/node/bin/node" ] \
+    || fail "bundled Node runtime is missing: $PKG_DIR/standalone/node/bin/node"
 
 if [ "${WARPI_SKIP_CHECKSUMS:-0}" != "1" ] && command -v sha256sum >/dev/null 2>&1; then
     (cd "$PKG_DIR" && find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum >SHA256SUMS)
