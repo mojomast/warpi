@@ -140,6 +140,7 @@ impl OnboardingMainView {
                 default_model_id.clone(),
                 false,
                 onboarding::OnboardingAuthState::LoggedOut,
+                false,
                 ctx,
             )
         });
@@ -202,6 +203,7 @@ impl OnboardingMainView {
             | AgentOnboardingEvent::UpgradeCopyUrlRequested
             | AgentOnboardingEvent::UpgradePasteTokenFromClipboardRequested
             | AgentOnboardingEvent::LoginFromWelcomeRequested
+            | AgentOnboardingEvent::LocalProviderSettingsRequested(_)
             | AgentOnboardingEvent::PrivacySettingsFromTerminalThemeSlideRequested
             | AgentOnboardingEvent::AppBecameActive => {
                 // No-op in the standalone demo binary

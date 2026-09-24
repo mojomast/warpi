@@ -57,6 +57,10 @@ pub enum AgentOnboardingEvent {
     OnboardingCompleted(SelectedSettings),
     OnboardingSkipped,
     LoginFromWelcomeRequested,
+    /// The local-backend welcome slide asked to open Settings -> Agents -> Local Pi
+    /// provider. Carries the in-progress onboarding choices so the host can apply
+    /// them while completing the flow.
+    LocalProviderSettingsRequested(SelectedSettings),
     /// Emitted when the user clicks the "Privacy Settings" link on the terminal
     /// intention theme slide. The variant name encodes that the event is only
     /// emitted from the terminal-intention theme slide; consumers (e.g. a
@@ -148,6 +152,7 @@ impl AgentOnboardingView {
         default_model_id: LLMId,
         workspace_enforces_autonomy: bool,
         auth_state: OnboardingAuthState,
+        local_backend: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let account_first = FeatureFlag::AccountFirstOnboarding.is_enabled();
@@ -188,12 +193,18 @@ impl AgentOnboardingView {
 
         let intro_slide = {
             let onboarding_state = onboarding_state.clone();
-            ctx.add_typed_action_view(move |_| IntroSlide::new(onboarding_state))
+            ctx.add_typed_action_view(move |_| {
+                IntroSlide::new(onboarding_state, local_backend)
+            })
         };
 
-        ctx.subscribe_to_view(&intro_slide, |_me, _view, event, ctx| match event {
+        ctx.subscribe_to_view(&intro_slide, |me, _view, event, ctx| match event {
             IntroSlideEvent::LoginRequested => {
                 ctx.emit(AgentOnboardingEvent::LoginFromWelcomeRequested);
+            }
+            IntroSlideEvent::ProviderSettingsRequested => {
+                let settings = me.onboarding_state.as_ref(ctx).settings();
+                ctx.emit(AgentOnboardingEvent::LocalProviderSettingsRequested(settings));
             }
         });
 
@@ -221,7 +232,9 @@ impl AgentOnboardingView {
 
         let customize_slide = {
             let onboarding_state = onboarding_state.clone();
-            ctx.add_typed_action_view(move |ctx| CustomizeUISlide::new(onboarding_state, ctx))
+            ctx.add_typed_action_view(move |ctx| {
+                CustomizeUISlide::new(onboarding_state, local_backend, ctx)
+            })
         };
 
         ctx.subscribe_to_view(&theme_picker_slide, |me, _view, event, ctx| {
