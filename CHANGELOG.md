@@ -10,7 +10,7 @@ date-based tags (`v0.YYYY.MM.DD.HH.MM.channel_NN`). Bump these together:
 A release build may also set `GIT_RELEASE_TAG` at compile time; when present it takes
 precedence over `WARPI_VERSION` in About.
 
-## 0.1.0 — 2026-09-23
+## 0.1.0 — 2026-09-24
 
 First public release. CI produces installable artifacts for **Linux x86_64 and
 Windows x86_64** — the Linux `warpi-linux-x86_64.tar.gz` (with a `.sha256`) and
