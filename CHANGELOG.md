@@ -10,6 +10,20 @@ date-based tags (`v0.YYYY.MM.DD.HH.MM.channel_NN`). Bump these together:
 A release build may also set `GIT_RELEASE_TAG` at compile time; when present it takes
 precedence over `WARPI_VERSION` in About.
 
+## 0.1.2 — 2026-09-24
+
+- **macOS packaging fixed.** `packaging/package-warpi-macos.sh` now creates the
+  CLI tarball before checksumming it and uses `arm64` artifact names that match
+  the workflow, so the macOS `.dmg` and `.tar.gz` are produced. Verified: the
+  `macos-aarch64` CI job built, packaged, attested, uploaded, and passed the
+  adapter tests.
+- **Onboarding: local-backend welcome slide.** On the warpi channel (or when
+  standalone mode is configured) the first-run experience shows a warpi welcome
+  that explains how to add a provider key — *Open Settings → Agents → Local Pi
+  provider, pick a preset, paste the key, Test connection* — with a button that
+  opens that settings page. The flow no longer routes a fresh warpi install
+  through a Warp login.
+
 ## 0.1.1 — 2026-09-24
 
 Windows hardening and cross-platform packaging.
