@@ -61,8 +61,12 @@ OutputBaseFilename={#OutputName}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-WizardSmallImageFile="installer-images\warp-logo.bmp"
-WizardImageFile="installer-images\warp-banner.bmp"
+; warpi brand artwork (the upstream warp-*.bmp files belong to the upstream channels).
+; Two resolutions per image: Inno Setup 6.7 picks the best match for the system DPI.
+; Composed from app/assets/bundled/png/warpi-wordmark.png and
+; app/channels/warpi/icon/no-padding/512x512.png; see installer-images/README.md.
+WizardSmallImageFile="installer-images\warpi-logo.png,installer-images\warpi-logo-2x.png"
+WizardImageFile="installer-images\warpi-banner.png,installer-images\warpi-banner-2x.png"
 SetupIconFile="..\..\app\channels\{#ReleaseChannel}\icon\no-padding\icon.ico"
 UninstallDisplayIcon="{app}\icon.ico"
 ; Force close previous Warp if it hasn't shut down yet.
