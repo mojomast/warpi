@@ -26,6 +26,15 @@ The helper's `dist/` directory must exist before the app is started; at runtime
 the app finds it at `standalone/pi-helper/dist/main.js` relative to the
 executable (or via `WARPI_PI_HELPER_ENTRY`).
 
+## Runtime prerequisite (end users)
+
+The app does **not** bundle a Node.js runtime. It launches the private Pi
+helper with `node` (resolved on `PATH`) unless the standalone config sets
+`helper_executable`. **Node.js >= 22.19.0 is required at runtime** on every
+platform; the Windows installer ships the helper JavaScript and its
+`node_modules` only. See `WINDOWS.md` section 8 for the Windows failure mode and
+the diagnostics to give an affected user.
+
 ## Configure standalone mode
 
 The normal way to configure warpi is the in-app settings page

@@ -67,7 +67,9 @@ pub struct StandaloneConfig {
     /// Absolute path to the bundled helper entry (`dist/main.js`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_entry: Option<PathBuf>,
-    /// Explicit executable for the helper (defaults to `node`).
+    /// Explicit executable for the helper. Defaults to `node` on `PATH`; the
+    /// helper requires Node.js >= 22.19.0. Set this when Node is not on `PATH`
+    /// or when a different runtime should be used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_executable: Option<PathBuf>,
     #[serde(default = "default_true")]

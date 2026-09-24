@@ -290,6 +290,8 @@ pub type TurnStream = mpsc::UnboundedReceiver<BridgeEvent>;
 pub enum BridgeError {
     #[error("helper process failed to start: {0}")]
     Spawn(String),
+    #[error("standalone helper runtime is not usable: {0}")]
+    Runtime(#[from] crate::helper::RuntimeCheckError),
     #[error("helper protocol error: {0}")]
     Protocol(#[from] ProtocolError),
     #[error("helper exited before completing the request (exit code {0:?}); stderr tail: {1}")]
@@ -431,6 +433,10 @@ pub struct StandaloneBridge {
 impl StandaloneBridge {
     /// Spawn the helper and start the driver.
     pub async fn spawn(config: BridgeConfig) -> Result<Self, BridgeError> {
+        // Fail with an actionable message before starting a runtime that would
+        // abort in its own startup (for example a Node build whose CSPRNG
+        // self-check fails), instead of surfacing a raw Node crash tail.
+        crate::helper::check_helper_runtime(&config.launch).await?;
         let helper = HelperProcess::spawn(config.launch.clone())
             .await
             .map_err(|e| BridgeError::Spawn(e.to_string()))?;
@@ -2045,6 +2051,7 @@ impl Clone for BridgeError {
     fn clone(&self) -> Self {
         match self {
             BridgeError::Spawn(message) => BridgeError::Spawn(message.clone()),
+            BridgeError::Runtime(error) => BridgeError::Runtime(error.clone()),
             BridgeError::Protocol(error) => BridgeError::Protocol(error.clone()),
             BridgeError::HelperExited(code, tail) => BridgeError::HelperExited(*code, tail.clone()),
             BridgeError::SessionNotFound(id) => BridgeError::SessionNotFound(id.clone()),

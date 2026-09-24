@@ -11,8 +11,10 @@
 //! signal or process-group assumptions are made.
 
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -23,6 +25,65 @@ use crate::protocol::{Envelope, MAX_FRAME_BYTES, ProtocolError};
 /// Environment variables the helper is allowed to see. Anything else is
 /// cleared before launch.
 const ALLOWED_ENV: [&str; 3] = ["PATH", "LANG", "LC_ALL"];
+
+/// Windows-only OS variables a Node.js runtime needs and that carry no
+/// credentials: where Windows lives (`SystemRoot`/`windir`), how to resolve an
+/// executable (`PATHEXT`), the command interpreter (`COMSPEC`), and basic CPU
+/// topology. The helper still gets no `USERPROFILE`/`APPDATA`, so user config
+/// stays out of its environment.
+#[cfg(windows)]
+const WINDOWS_OS_ENV: [&str; 6] = [
+    "SystemRoot",
+    "windir",
+    "PATHEXT",
+    "COMSPEC",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+];
+
+/// Minimum Node.js version required by the bundled Pi helper and its SDK
+/// (`standalone/pi-helper/package.json` -> `engines.node`).
+pub const REQUIRED_NODE_VERSION: (u64, u64, u64) = (22, 19, 0);
+pub const REQUIRED_NODE_VERSION_STR: &str = "22.19.0";
+
+/// Why the configured helper runtime cannot run the helper.
+///
+/// These messages are shown to the user, so they name the executable and the
+/// action that fixes the problem instead of dumping a Node crash.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum RuntimeCheckError {
+    #[error(
+        "the helper runtime `{executable}` was not found. warpi runs the standalone backend on \
+         Node.js >= {required}; install an official Node.js {required}+ build (nodejs.org) or set \
+         `helper_executable` in the standalone config to an existing node binary"
+    )]
+    NotFound {
+        executable: String,
+        required: &'static str,
+    },
+    #[error(
+        "the helper runtime `{executable}` is Node.js {found}, but this build needs Node.js >= \
+         {required}. Install an official Node.js {required} (LTS) or newer, or set \
+         `helper_executable` in the standalone config"
+    )]
+    Version {
+        executable: String,
+        found: String,
+        required: &'static str,
+    },
+    #[error(
+        "the helper runtime `{path}` failed to start (exit code {code:?}). warpi needs a working \
+         Node.js >= {required}; this is a Node/runtime failure, not a warpi failure. Install an \
+         official Node.js LTS build from nodejs.org, or set `helper_executable` in the standalone \
+         config to a known-good node binary. Runtime stderr:\n{stderr}"
+    )]
+    Unusable {
+        path: String,
+        code: Option<i32>,
+        required: &'static str,
+        stderr: String,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub struct HelperLaunchConfig {
@@ -59,6 +120,202 @@ impl HelperLaunchConfig {
     }
 }
 
+/// Apply the environment a helper child is allowed to see: a strict allowlist,
+/// the fork-private home/scratch directories, and (on Windows) the OS variables
+/// a Node runtime needs to start. Never credentials.
+fn apply_sandbox_env(command: &mut Command, config: &HelperLaunchConfig) {
+    command.env_clear();
+    for (key, value) in &config.extra_env {
+        command.env(key, value);
+    }
+    for key in ALLOWED_ENV {
+        if let Ok(value) = std::env::var(key) {
+            command.env(key, value);
+        }
+    }
+    #[cfg(windows)]
+    for key in WINDOWS_OS_ENV {
+        if let Ok(value) = std::env::var(key) {
+            command.env(key, value);
+        }
+    }
+    command
+        .env("HOME", &config.data_dir)
+        .env("TMPDIR", &config.scratch_dir)
+        // Node reads TEMP/TMP on Windows, not TMPDIR, so point both at the
+        // fork-private scratch dir there too.
+        .env("TEMP", &config.scratch_dir)
+        .env("TMP", &config.scratch_dir)
+        .env("WARPI_PI_SCRATCH_DIR", &config.scratch_dir)
+        .env("PI_OFFLINE", "1")
+        .env("NO_COLOR", "1");
+}
+
+/// Resolve the helper executable the way `CreateProcess`/`execvp` will: an
+/// explicit path is used as-is, a bare name is searched on `PATH` (honouring
+/// `PATHEXT` on Windows). Returns the first existing candidate.
+pub fn resolve_helper_executable(executable: &Path) -> Option<PathBuf> {
+    resolve_helper_executable_with_path(executable, std::env::var_os("PATH").as_deref())
+}
+
+/// [`resolve_helper_executable`] with an injected `PATH`, so tests do not
+/// mutate the process environment.
+pub fn resolve_helper_executable_with_path(
+    executable: &Path,
+    path_env: Option<&OsStr>,
+) -> Option<PathBuf> {
+    if executable.as_os_str().is_empty() {
+        return None;
+    }
+    let explicit = executable.is_absolute() || executable.components().count() > 1;
+    if explicit {
+        return executable.is_file().then(|| executable.to_path_buf());
+    }
+    let Some(path_env) = path_env else {
+        return executable.is_file().then(|| executable.to_path_buf());
+    };
+    for dir in std::env::split_paths(path_env) {
+        let candidate = dir.join(executable);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(windows)]
+        if executable.extension().is_none() {
+            let pathext =
+                std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+            for ext in pathext.split(';').filter(|ext| !ext.is_empty()) {
+                let candidate = dir.join(format!(
+                    "{}{}",
+                    executable.to_string_lossy(),
+                    ext.to_ascii_lowercase()
+                ));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse the first three dot-separated numeric components of a version string,
+/// tolerating a leading `v` and a pre-release suffix.
+fn parse_node_version(text: &str) -> Option<(u64, u64, u64)> {
+    let text = text.trim().trim_start_matches('v');
+    let core = text.split(['-', '+']).next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    let patch = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Verify the configured helper runtime can actually start Node and run the
+/// required version, before the bridge spawns the real helper.
+///
+/// The probe runs a one-line script rather than `--version`: `node --version`
+/// returns before Node initializes OpenSSL, so it succeeds even on a runtime
+/// whose startup self-check (`CHECK(ncrypto::CSPRNG(nullptr, 0))`) aborts for
+/// every real invocation. A one-line script exercises that same startup path.
+pub async fn check_helper_runtime(config: &HelperLaunchConfig) -> Result<(), RuntimeCheckError> {
+    // The probe runs with the same working directory as the helper; create the
+    // fork-private dirs first, since `HelperProcess::spawn` (which normally
+    // does that) has not run yet.
+    for dir in [&config.data_dir, &config.scratch_dir] {
+        std::fs::create_dir_all(dir).map_err(|error| RuntimeCheckError::Unusable {
+            path: config.executable.display().to_string(),
+            code: None,
+            required: REQUIRED_NODE_VERSION_STR,
+            stderr: format!("cannot create {}: {error}", dir.display()),
+        })?;
+    }
+    let Some(path) = resolve_helper_executable(&config.executable) else {
+        return Err(RuntimeCheckError::NotFound {
+            executable: config.executable.display().to_string(),
+            required: REQUIRED_NODE_VERSION_STR,
+        });
+    };
+    let path_string = path.display().to_string();
+    let mut command = Command::new(&path);
+    command
+        .args(["-e", "process.stdout.write(process.versions.node)"])
+        .current_dir(&config.working_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    apply_sandbox_env(&mut command, config);
+    let child = command
+        .spawn()
+        .map_err(|error| RuntimeCheckError::Unusable {
+            path: path_string.clone(),
+            code: None,
+            required: REQUIRED_NODE_VERSION_STR,
+            stderr: error.to_string(),
+        })?;
+    let output = match tokio::time::timeout(RUNTIME_PROBE_TIMEOUT, child.wait_with_output()).await {
+        Ok(Ok(output)) => output,
+        Ok(Err(error)) => {
+            return Err(RuntimeCheckError::Unusable {
+                path: path_string,
+                code: None,
+                required: REQUIRED_NODE_VERSION_STR,
+                stderr: error.to_string(),
+            });
+        }
+        Err(_) => {
+            return Err(RuntimeCheckError::Unusable {
+                path: path_string,
+                code: None,
+                required: REQUIRED_NODE_VERSION_STR,
+                stderr: format!(
+                    "the runtime did not answer within {}s",
+                    RUNTIME_PROBE_TIMEOUT.as_secs()
+                ),
+            });
+        }
+    };
+    if !output.status.success() {
+        return Err(RuntimeCheckError::Unusable {
+            path: path_string,
+            code: output.status.code(),
+            required: REQUIRED_NODE_VERSION_STR,
+            stderr: bounded_probe_stderr(&output.stderr),
+        });
+    }
+    let version = String::from_utf8_lossy(&output.stdout);
+    match parse_node_version(&version) {
+        Some(found) if found < REQUIRED_NODE_VERSION => Err(RuntimeCheckError::Version {
+            executable: path_string,
+            found: version.trim().to_string(),
+            required: REQUIRED_NODE_VERSION_STR,
+        }),
+        // A successful start with an unrecognized version string is accepted:
+        // the point of this probe is liveness, and the helper reports its exact
+        // Node version in the `hello` handshake.
+        _ => Ok(()),
+    }
+}
+
+const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Keep the tail of a failed probe's stderr for the user-visible error. It is
+/// Node's own startup output, not helper traffic, so it does not need the
+/// prompt-scrubbing the live stderr tail gets.
+fn bounded_probe_stderr(stderr: &[u8]) -> String {
+    const MAX_PROBE_STDERR_BYTES: usize = 4096;
+    let text = String::from_utf8_lossy(stderr);
+    let text = text.trim();
+    if text.len() <= MAX_PROBE_STDERR_BYTES {
+        return text.to_string();
+    }
+    let mut end = MAX_PROBE_STDERR_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n[truncated]", &text[..end])
+}
+
 /// Messages produced by the helper process.
 #[derive(Debug)]
 pub enum HelperOutput {
@@ -87,25 +344,11 @@ impl HelperProcess {
         command
             .args(&config.args)
             .current_dir(&config.working_dir)
-            .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        for (key, value) in &config.extra_env {
-            command.env(key, value);
-        }
-        for key in ALLOWED_ENV {
-            if let Ok(value) = std::env::var(key) {
-                command.env(key, value);
-            }
-        }
-        command
-            .env("HOME", &config.data_dir)
-            .env("TMPDIR", &config.scratch_dir)
-            .env("WARPI_PI_SCRATCH_DIR", &config.scratch_dir)
-            .env("PI_OFFLINE", "1")
-            .env("NO_COLOR", "1");
+        apply_sandbox_env(&mut command, &config);
         let mut child = command.spawn()?;
         let stdin = child.stdin.take().expect("stdin piped");
         let stdout = child.stdout.take().expect("stdout piped");
@@ -363,6 +606,140 @@ process.exit(0);"#,
             keys.contains(&"HOME".to_string()),
             "HOME must be set to the private dir"
         );
+        for key in ["TMPDIR", "TEMP", "TMP"] {
+            assert!(
+                keys.contains(&key.to_string()),
+                "{key} must point the helper's temp files at the private scratch dir"
+            );
+        }
         helper.shutdown().await;
+    }
+
+    fn probe_config(executable: PathBuf, dir: &Path) -> HelperLaunchConfig {
+        HelperLaunchConfig {
+            executable,
+            args: vec!["helper.mjs".to_string()],
+            working_dir: dir.to_path_buf(),
+            data_dir: dir.to_path_buf(),
+            scratch_dir: dir.join("scratch"),
+            extra_env: Vec::new(),
+            stderr_tail_lines: 10,
+            shutdown_timeout: Duration::from_secs(2),
+        }
+    }
+
+    #[test]
+    fn parse_node_version_accepts_v_prefix_and_suffix() {
+        assert_eq!(parse_node_version("v22.19.0"), Some((22, 19, 0)));
+        assert_eq!(parse_node_version("22.19.0"), Some((22, 19, 0)));
+        assert_eq!(
+            parse_node_version("v23.1.0-nightly20250101"),
+            Some((23, 1, 0))
+        );
+        assert_eq!(parse_node_version("not-a-version"), None);
+        assert_eq!(parse_node_version("v22"), Some((22, 0, 0)));
+    }
+
+    #[test]
+    fn resolve_helper_executable_uses_explicit_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("node");
+        std::fs::write(&file, b"").expect("write");
+        let resolved = resolve_helper_executable_with_path(&file, None);
+        assert_eq!(resolved.as_deref(), Some(file.as_path()));
+    }
+
+    #[test]
+    fn resolve_helper_executable_reports_missing_explicit_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("node");
+        assert_eq!(resolve_helper_executable_with_path(&missing, None), None);
+    }
+
+    #[test]
+    fn resolve_helper_executable_searches_injected_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        let node = bin.join("node");
+        std::fs::write(&node, b"").expect("write");
+        let path_env = std::env::join_paths([bin.as_path()]).expect("join paths");
+        let resolved =
+            resolve_helper_executable_with_path(Path::new("node"), Some(path_env.as_os_str()));
+        assert_eq!(resolved.as_deref(), Some(node.as_path()));
+    }
+
+    #[tokio::test]
+    async fn runtime_check_reports_missing_runtime() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("no-such-node");
+        let error = check_helper_runtime(&probe_config(missing, dir.path()))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, RuntimeCheckError::NotFound { .. }),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn write_script(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, body).expect("write script");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_check_accepts_a_supported_node() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runtime = dir.path().join("node");
+        write_script(&runtime, "#!/bin/sh\nprintf '22.19.0'\n");
+        check_helper_runtime(&probe_config(runtime, dir.path()))
+            .await
+            .expect("supported node passes");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_check_reports_an_unsupported_node() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runtime = dir.path().join("node");
+        write_script(&runtime, "#!/bin/sh\nprintf 'v18.20.4'\n");
+        let error = check_helper_runtime(&probe_config(runtime, dir.path()))
+            .await
+            .unwrap_err();
+        match error {
+            RuntimeCheckError::Version {
+                found, required, ..
+            } => {
+                assert_eq!(found, "v18.20.4");
+                assert_eq!(required, REQUIRED_NODE_VERSION_STR);
+            }
+            other => panic!("expected Version, got {other}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn runtime_check_surfaces_a_crashing_runtime_with_its_stderr() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runtime = dir.path().join("node");
+        write_script(
+            &runtime,
+            "#!/bin/sh\necho '  #  Assertion failed: ncrypto::CSPRNG(nullptr, 0)' >&2\nexit 134\n",
+        );
+        let error = check_helper_runtime(&probe_config(runtime, dir.path()))
+            .await
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("ncrypto::CSPRNG"),
+            "crash stderr must be surfaced: {message}"
+        );
+        assert!(
+            message.contains("official Node.js LTS"),
+            "message must be actionable: {message}"
+        );
     }
 }

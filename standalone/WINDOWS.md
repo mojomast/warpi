@@ -263,6 +263,104 @@ Free space fell from 12 GB to 7.4 GB across the three runs (including downloaded
 crates and the rustup std component). The `target/` directory grew from ~7.8 GB
 to ~9.8 GB; the `x86_64-pc-windows-gnu` subdirectory itself is ~640 MB.
 
+## 8. Runtime requirement and the `ncrypto::CSPRNG` startup abort
+
+The installer bundles the helper's JavaScript and `node_modules` but **no Node
+runtime**. At run time the app spawns the helper as `node <helper>/dist/main.js`
+with an explicit argv, a controlled working directory, and an allowlisted
+environment (`app/src/ai/standalone/mod.rs`; `crates/standalone_agent/src/helper.rs`).
+`helper_executable` defaults to the literal `node` and is resolved on `PATH` by
+the OS; a Windows install therefore uses whatever `node.exe` the machine has.
+**Node.js >= 22.19.0 is required** (helper `engines` and the Pi SDK's own
+metadata) and no version is pinned or shipped.
+
+### The reported failure
+
+A user saw, per attempt:
+
+```
+Request failed with error: Other(helper exited before completing the request (exit code None);
+stderr tail:
+  #  C:\...\Warpi\warpi.exe[31928]: ... node::InitializeOncePerProcessInternal(...) at src\node.cc:1236
+  #  Assertion failed: ncrypto::CSPRNG(nullptr, 0)
+----- Native stack trace -----
+ 1: DSA_meth_get_flags+198106
+ ...
+```
+
+What is established, from Node's source and the field reports:
+
+- The assertion is Node's own startup self-check
+  (`CHECK(ncrypto::CSPRNG(nullptr, 0))` in `InitializeOncePerProcessInternal`),
+  not anything in warpi or the helper JS. It runs before any helper code.
+- The `warpi.exe[31928]` prefix is misleading. Node's `Assert` prints
+  `GetHumanReadableProcessName()`, which on Windows is `GetProcessTitle()` +
+  `uv_os_getpid()`; libuv's Windows `uv_get_process_title()` reads the **console
+  window title** (`GetConsoleTitleW`, `libuv src/win/util.c`), not the crashing
+  image. The helper inherits warpi's console, so the string names the console,
+  not the process. The crashing process is the `node` runtime the app spawned.
+- `ncrypto::CSPRNG` fails when OpenSSL's `RAND_status()`/`RAND_bytes_ex()` cannot
+  produce randomness. The documented trigger is an OpenSSL 3 misconfiguration
+  (a FIPS provider/config that cannot instantiate the DRBG): Node issue #56377,
+  Red Hat bug 2389183, and the Elastic Kibana FIPS thread all show the same
+  assertion. A Windows field report of the identical abort is OpenAI Codex issue
+  #17451 (Node v24.15.0), where system `node` answered `--version` but any
+  script aborted.
+- `node --version` is **not** a usable probe: Node returns from `--version`
+  (`node.cc`, `print_version` early return) before the OpenSSL/CSPRNG block runs.
+  A one-line `-e` script exercises the failing path; `--version` does not.
+
+What remains a hypothesis (no Windows host here, so unverified):
+
+- The user's `node` build is unofficial/corrupted/FIPS-configured, or security
+  software blocks its RNG. warpi's CI `windows-latest` job starts the same helper
+  with the same environment allowlist and reaches the `hello` handshake, so the
+  allowlist alone is not universally fatal — the runtime is the differentiator.
+- warpi's environment allowlist cleared `SystemRoot`/`windir`/`TEMP`/`TMP` and
+  did not set Windows' `TEMP`/`TMP` at all. CI passing suggests this is not the
+  root cause of the reported abort, but it is a real robustness/containment gap.
+
+### What the code does now
+
+`check_helper_runtime` (`crates/standalone_agent/src/helper.rs`) runs before the
+bridge spawns the helper. It resolves the executable on `PATH`, runs a one-line
+`node -e` probe with the same sandbox environment and working directory, and
+reports one of: runtime not found, unsupported version (with the found version),
+or a runtime that failed to start (with its bounded stderr). `StandaloneBridge::spawn`
+maps that to `BridgeError::Runtime`, so the request shows an actionable message
+instead of a raw crash tail. The helper environment now also sets `TEMP`/`TMP`
+to the fork-private scratch dir on all platforms and, on Windows, passes through
+`SystemRoot`/`windir`/`PATHEXT`/`COMSPEC`/`PROCESSOR_ARCHITECTURE`/`NUMBER_OF_PROCESSORS`
+(none carry credentials).
+
+### Diagnostics and workarounds for an affected user
+
+Run these in a normal terminal (not inside warpi):
+
+```powershell
+where.exe node
+node --version
+node -e "process.stdout.write(process.crypto ? 'crypto-ok' : 'no')"
+node -e "console.log(require('crypto').randomBytes(8).toString('hex'))"
+```
+
+If the last two abort with `ncrypto::CSPRNG` while `--version` works, the Node
+runtime itself is broken. Then:
+
+1. Install an official Node.js LTS (>= 22.19.0) from nodejs.org and confirm the
+   `node -e` check passes.
+2. Point warpi at that exact binary. In `<warpi data dir>\standalone\config.json`
+   add:
+
+   ```json
+   "helper_executable": "C:\\Program Files\\nodejs\\node.exe"
+   ```
+
+   (`WARPI_STANDALONE_CONFIG` can point at a config elsewhere.) The settings page
+   does not yet expose this field, so edit the file. Restart warpi after saving.
+3. If Node lives on `PATH` under a different name/version manager (nvm, fnm,
+   Volta), prefer an explicit `helper_executable` over relying on `PATH`.
+
 ## What a real Windows build requires
 
 On a Windows host (the project's supported configuration):
@@ -297,6 +395,9 @@ expect.
 
 - No `warpi.exe` was produced or executed; no Windows GUI, agent turn, or
   helper session has ever run on Windows.
+- The helper runtime preflight (section 8) was not run against a Windows Node
+  whose startup aborts; the new Windows environment variables and the
+  user-visible failure message were not observed on Windows.
 - `aws-lc-sys`, `libsqlite3-sys`, the `arborium-*` crates, `zstd-sys`, etc. were
   not shown to build on a Windows host; only their Linux-host cross-compilation
   was shown to fail for lack of a cross C compiler.

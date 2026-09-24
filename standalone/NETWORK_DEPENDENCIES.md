@@ -24,7 +24,7 @@ request fails at the local auth boundary before any socket is opened.
 | 12 | MCP servers (user-configured) | `crates/mcp/src/runtime.rs` | Out of scope for v1. MCP servers and tools are not advertised to the model in standalone mode. | `PROVIDER_COMPATIBILITY.md` (deferred list) |
 | 13 | Remote server download (`/download/cli`) | `crates/remote_server/src/setup.rs` | Unreachable: SSH workspaces are unsupported and refused. | `SECURITY.md` |
 | 14 | LSP binary installs (GitHub) | `crates/lsp/src/install.rs` | Only on demand; unrelated to agent inference. | n/a |
-| 15 | Node/npm downloads | `crates/node_runtime` | Not used by the standalone helper; the helper is bundled and launched with the system/runtime `node` chosen at install time. | `standalone/pi-helper` ships `dist/` |
+| 15 | Node/npm downloads | `crates/node_runtime` | Not used by the standalone helper; the helper JavaScript is bundled and launched with the system `node` on `PATH` (or `helper_executable`), currently unversioned/unpinned. | `standalone/pi-helper` ships `dist/`; runtime needs Node >= 22.19 |
 
 ## Standalone helper egress
 

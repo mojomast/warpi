@@ -102,6 +102,28 @@ regression tests:
    with `UnexpectedUpgrade` — the adapter now sends it only for new
    conversations.
 
+## Runtime preflight hardening (2026-09-24)
+
+Added after a Windows 0.1.0 report of `Assertion failed: ncrypto::CSPRNG(nullptr, 0)`
+during Node's own startup (see `WINDOWS.md` section 8). The bridge now probes the
+configured helper runtime before spawning the helper and reports an actionable
+`BridgeError::Runtime` (not found / version `< 22.19.0` / failed to start with
+stderr) instead of a raw crash tail. The helper environment also sets
+`TEMP`/`TMP` to the private scratch dir and passes through non-secret Windows OS
+variables.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Preflight unit tests (8 new, incl. crash-stderr surfacing) | `cargo test -p standalone_agent --lib helper::` | **PASS** — 9 passed (2026-09-24) |
+| Bridge unit tests after wiring the probe | `cargo test -p standalone_agent --lib bridge::` | **PASS** — 24 passed (2026-09-24) |
+| Full Rust backend suite after wiring the probe | `cargo test -p standalone_agent --no-fail-fast` | **PASS** (2026-09-24) |
+| App compile | `cargo check -p warp --bin warpi --features gui` | **PASS** (2026-09-24) |
+
+**Not verified:** the probe has not been exercised against a Windows Node whose
+startup aborts; the new Windows environment variables and the user-visible
+message string were not observed on Windows. Unit coverage uses shell-script
+stand-ins for the runtime.
+
 ## Not run
 
 | Item | Status | Notes |
