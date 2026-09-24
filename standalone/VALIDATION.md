@@ -178,9 +178,10 @@ final   : "Warpi round trip complete."
    GitHub build-provenance attestations (`actions/attest-build-provenance`) for
    the uploaded artifacts, which is provenance, not Authenticode or GPG (no
    signing certificate or key exists). The Windows `.zip` remains a manual
-   staging step, and the Inno Setup installer is wired into the Windows CI job
-   but has never been compiled or run here (no Inno Setup on this box); both
-   Windows artifacts are CI-only and unverified. The generic
+   staging step, and the Inno Setup installer is wired into the Windows CI job;
+   its script now compiles under Inno Setup 6.7.1 (verified locally under Wine
+   for the warpi/dev/stable channels) but the produced installer has not been
+   run, so both Windows artifacts remain end-to-end unverified. The generic
    AppImage/.deb/.rpm bundlers are not used for warpi because they do not ship
    the Node Pi helper that warpi spawns.
 7. **Compile warnings remain** (5 in the app crate at the last check: an unused

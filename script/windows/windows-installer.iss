@@ -32,14 +32,8 @@
   "Unknown")))))
 #define AppMutexName "Local\Warp" + ChannelPascalCase + "_SingleInstance"
 
-; warpi registers its bundle id under dev.warpi.Warpi; every other channel uses
-; the upstream dev.warp.* namespace.
 #ifndef AppIdPrefix
-  #if ReleaseChannel == "warpi"
-    #define AppIdPrefix "dev.warpi"
-  #else
-    #define AppIdPrefix "dev.warp"
-  #endif
+  #define AppIdPrefix (ReleaseChannel == "warpi") ? "dev.warpi" : "dev.warp"
 #endif
 
 
@@ -158,6 +152,8 @@ Type: filesandordirs; Name: "{localappdata}\warp\{#MyAppName}"
 Type: filesandordirs; Name: "{app}\bin"
 
 [Icons]
+; warpi registers its bundle id under dev.warpi.Warpi; every other channel uses
+; the upstream dev.warp.* namespace.
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "{#AppIdPrefix}.{#MyAppName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "{#AppIdPrefix}.{#MyAppName}"; Tasks: desktopicon
 
@@ -262,11 +258,12 @@ begin
     { Determine the channel-specific script name.  These values must match
       `Channel::cli_command_name` in the Rust source. }
 #if ReleaseChannel == "stable"
-    CmdScriptName := 'oz.cmd'
-#elif ReleaseChannel == "warpi"
-    CmdScriptName := 'warpi.cmd';
+    CmdScriptName := 'oz.cmd';
 #else
     CmdScriptName := 'oz-{#ReleaseChannel}.cmd';
+#endif
+#if ReleaseChannel == "warpi"
+    CmdScriptName := 'warpi.cmd';
 #endif
 
     { Create the helper CMD script }

@@ -14,7 +14,7 @@ cross-target build got, what stops it, and what a real Windows build needs.
 | 2 | `cargo check -p standalone_agent --target x86_64-pc-windows-gnu` | **PASS** — exit 0, no errors, 20.57 s. |
 | 3 | `cargo check -p warp --bin warpi --features gui --target x86_64-pc-windows-gnu` | **FAIL** — exit 101. First real blocker: `aws-lc-sys` cannot find `x86_64-w64-mingw32-gcc`; a `--keep-going` run completes with 43 build-script failures (all native C/asm deps). |
 | 4 | Windows cross toolchain on this box | **None present**: no mingw-w64, no cargo-xwin/xwin, no `llvm-rc`/`windres`/`dlltool`, no clang/MSVC. |
-| 5 | Windows packaging scripts vs. the `warpi` rename | **Updated 2026-09-23**: `bundle.ps1` and `windows-installer.iss` now carry the `warpi` channel (bin `warpi`, app `Warpi`, `warpi.cmd`, `Warpi` mutex); the installer is wired into CI but unbuilt/unverified. |
+| 5 | Windows packaging scripts vs. the `warpi` rename | **Updated 2026-09-24**: `bundle.ps1` and `windows-installer.iss` now carry the `warpi` channel (bin `warpi`, app `Warpi`, `warpi.cmd`, `Warpi` mutex); the installer *script* compiles under Inno Setup 6.7.1 (verified locally under Wine for the warpi/dev/stable channels) and is wired into CI, but the produced installer has not been run. |
 | 6 | Pi helper (`standalone/pi-helper`) platform independence | **Yes at the JS level**: `dist/` is plain ESM JavaScript; native dependencies are prebuilt per-platform optional packages (win32 variants present in `package-lock.json`); no node-gyp build. Not executed on Windows. |
 | 7 | Disk headroom | Started at 12 GB free; ended at 7.4 GB after the full GUI run. Free space never approached the 1.5 GB abort threshold. |
 
@@ -202,17 +202,27 @@ updated. The probe results below are retained as history.
   resolve `{app}\standalone\pi-helper\dist\main.js`; the `resources\*` entry is
   likewise skippable.
 
-As of 2026-09-23 `.github/workflows/warpi-build.yml` builds `WarpiSetup.exe`
-via Inno Setup on `windows-latest` from the staged bundle. **That installer has
-never been compiled or run** — this machine has no Inno Setup and no Windows —
-so it is wired-but-unverified. It is not Authenticode-signed; CI attaches a
-GitHub build-provenance attestation (not a signature) to the uploaded file.
+As of 2026-09-24 `.github/workflows/warpi-build.yml` builds `WarpiSetup.exe`
+via Inno Setup on `windows-latest` from the staged bundle. The
+`windows-installer.iss` **script now compiles under Inno Setup 6.7.1** (verified
+locally under Wine for the `warpi`/`dev`/`stable` channels), but **the produced
+installer has still never been run/installed on Windows**, so it remains
+end-to-end unverified. It is not Authenticode-signed; CI attaches a GitHub
+build-provenance attestation (not a signature) to the uploaded file.
+
+The original compile failure was not the `#elif` or the `AppIdPrefix`
+conditional: a standalone `;` comment placed between the backslash-continued
+`ChannelPascalCase` define and `[Setup]` corrupted the `[Code]` section's line
+accounting. That comment is relocated; the `#elif` is also rewritten as the
+simple `#if`/`#else`/`#endif` form already used elsewhere in the file, and the
+missing semicolon in the `stable` branch is fixed.
 
 
-Conclusion (updated 2026-09-23): the warpi entries the first probe called for
-are now in both scripts, and the CI job builds the installer. What remains is
-not script work but verification: the installer has never been compiled or run
-without a Windows host, and it is unsigned (provenance-attested instead).
+Conclusion (updated 2026-09-24): the warpi entries the first probe called for
+are now in both scripts, and the CI job builds the installer. The installer
+script compiles under Inno Setup 6.7.1 (verified locally under Wine); what
+remains is running the produced installer on a real Windows host. It is
+unsigned (provenance-attested instead).
 
 ## 6. Pi helper platform independence
 
@@ -294,8 +304,10 @@ expect.
   never been run.
 - The helper was not executed on Windows; its native win32 dependencies were
   inspected in the lockfile only.
-- Packaging/installer behavior for `warpi` on Windows is untested and the
-  scripts are known stale (section 5).
+- Packaging/installer behavior for `warpi` on Windows is untested: the scripts
+  are updated and the installer script compiles under Inno Setup 6.7.1 (local,
+  under Wine), but no installer has been run and no `warpi.exe` has executed
+  (section 5).
 
 ## Reproduce
 

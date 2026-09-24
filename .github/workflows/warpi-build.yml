@@ -29,8 +29,10 @@
 #
 # Artifact independence: in BOTH jobs the bundle assembly, provenance
 # attestation, and artifact upload run BEFORE the adapter-test step, so a
-# failing adapter test can never cost us the artifacts. The test step stays
-# last, so the job still ends red when tests fail.
+# failing adapter test can never cost us the artifacts. On Windows the attest
+# and upload steps also carry `if: always()`, so a FAILED installer build still
+# yields the staged bundle zip (and still attests it). The test step stays last,
+# so the job still ends red when any step fails.
 #
 # Local evidence for the commands this workflow mirrors lives in
 # standalone/VALIDATION.md and standalone/evidence/.
@@ -44,9 +46,10 @@
 #     a warm npm cache (setup-node's cache); if that fails the script falls back
 #     to copying the full node_modules, which no runner has exercised;
 #   * the Windows bundle staging/zip and its runtime payload (skipped so far);
-#   * the Windows Inno Setup installer built by the windows-x86_64 job: it is
-#     wired here but has never been compiled or run (no Inno Setup on the local
-#     audit machine);
+#   * the Windows Inno Setup installer built by the windows-x86_64 job: the
+#     script now compiles under Inno Setup 6.7.1 (verified locally for the
+#     warpi/dev/stable channels with the official ISCC under Wine) but the
+#     produced installer has still never been run/installed on Windows;
 #   * third-party action pinning/caching behaviour.
 # Artifacts are accompanied by GitHub build-provenance attestations
 # (actions/attest-build-provenance), which require `id-token: write` and
@@ -242,10 +245,11 @@ jobs:
           Compress-Archive -Path "$root/*" -DestinationPath "dist/warpi-windows-x86_64.zip" -Force
           Get-Item "dist/warpi-windows-x86_64.zip" | Format-List Length
 
-      # UNVERIFIED: Inno Setup is not available on the local audit machine, so
-      # this installer has never been compiled or run. It reuses the staged
-      # bundle as the payload root, so the warpi.exe binary, its Windows assets,
-      # and the private Pi helper are installed together (the helper resolves at
+      # The script compiles under Inno Setup 6.7.1 (verified locally for the
+      # warpi/dev/stable channels with the official ISCC under Wine); the result
+      # has not yet been run/installed on Windows. It reuses the staged bundle as
+      # the payload root, so the warpi.exe binary, its Windows assets, and the
+      # private Pi helper are installed together (the helper resolves at
       # {app}\standalone\pi-helper\dist\main.js, next to the executable). The
       # setup executable is NOT Authenticode-signed; provenance is provided by
       # the attestation step below instead.
@@ -269,7 +273,13 @@ jobs:
           if (-not $?) { throw "Inno Setup failed to build the warpi installer" }
           Get-ChildItem "script\windows\Output" | Format-Table Name, Length
 
+      # `if: always()` so a failed installer build still produces (and, when
+      # present, attests) the staged bundle zip. The subject list may contain a
+      # path that does not exist (the installer exe after an installer failure);
+      # the bundle zip still matches, so the attestation is created for it and
+      # the upload below still runs. The job stays red from the failed step.
       - name: Attest Windows artifact provenance
+        if: always()
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
@@ -277,6 +287,7 @@ jobs:
             script/windows/Output/WarpiSetup.exe
 
       - name: Upload Windows artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: warpi-windows-x86_64
