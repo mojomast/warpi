@@ -10,6 +10,31 @@ date-based tags (`v0.YYYY.MM.DD.HH.MM.channel_NN`). Bump these together:
 A release build may also set `GIT_RELEASE_TAG` at compile time; when present it takes
 precedence over `WARPI_VERSION` in About.
 
+## 0.1.1 — 2026-09-24
+
+Windows hardening and cross-platform packaging.
+
+- **Bundled Node runtime on every platform.** Releases ship a pinned,
+  SHA-256-verified Node.js 22.19.0 next to the executable, and the app prefers it
+  over `PATH` (`helper_executable` still overrides). New
+  `script/fetch-node-runtime.sh` (Linux/macOS) and the existing PowerShell script
+  (Windows) stage it; the installer and bundles include it.
+- **Windows startup crash fixed.** The helper's sanitized environment now passes
+  `SystemRoot`/`windir`/`TEMP`/`TMP` (and CPU topology), which Node 24's
+  `ncrypto::CSPRNG` startup self-check needs; previously a clean host could abort
+  on every prompt.
+- **Windows fixture tests un-scoped.** The harness now hands Node a plain absolute
+  helper path (Node 24 rejects the `\\?\` form `canonicalize()` returns) and the
+  TS harness supplies the Windows OS variables, so every fixture suite runs on
+  Windows. Verified end to end on a real Windows host.
+- **macOS packaging.** New `packaging/package-warpi-macos.sh` (CLI tarball plus a
+  drag-to-Applications `.app`/`.dmg`) and a `macos-aarch64` CI job. **Unverified.**
+- **Command-line installs.** `install.sh` installs the binary, helper, and bundled
+  runtime under `~/.local/opt/warpi` on Linux and macOS.
+- **Helper system-prompt guidance.** The model is told the shell is PowerShell on
+  Windows (use `$env:VAR` not `%VAR%`, `;` not `&`) and not to batch a slow
+  command with other commands.
+
 ## 0.1.0 — 2026-09-24
 
 First public release. CI produces installable artifacts for **Linux x86_64 and

@@ -13,7 +13,7 @@ Warp's own approval, tool-card, diff, and execution paths stay in charge of ever
 workspace side effect. **No Warp account is required, and no Warp server sits in
 the agent path.**
 
-Current version: **0.1.0** (release notes in [`CHANGELOG.md`](CHANGELOG.md); the
+Current version: **0.1.1** (release notes in [`CHANGELOG.md`](CHANGELOG.md); the
 app shows the same string in **Settings → About**). This is an early,
 deliberately honest release: every capability below carries an evidence pointer,
 and anything that is not verified says so.

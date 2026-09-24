@@ -12,7 +12,7 @@ use crate::settings_view::SettingsSection;
 
 /// Version shown in About when the build has no compile-time release tag.
 /// Keep in sync with `standalone/VERSION` and the `warp` crate version.
-pub const WARPI_VERSION: &str = "v0.1.0";
+pub const WARPI_VERSION: &str = "v0.1.1";
 
 /// True when the standalone (local Pi) backend is serving agent requests.
 pub fn hidden_ui() -> bool {

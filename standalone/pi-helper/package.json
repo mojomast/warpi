@@ -1,6 +1,6 @@
 {
   "name": "@warpi/pi-agent-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Private stdio helper embedding the Pi coding-agent SDK for the standalone Warp agent backend. Not a public package.",
   "type": "module",
