@@ -75,8 +75,8 @@ fn assert_paused_exchange(events: &[api::ResponseEvent], expected_command: &str)
     );
 }
 
-// Uses the cross-process fixture provider, which is unreliable on Windows;
-// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+// Cross-process fixture test: the real helper talks to a separate Node fixture
+// provider (tests/support/mod.rs).
 fixture_test! {
 async fn native_prompt_tool_result_second_request_and_final_text() {
     if !node_available() {

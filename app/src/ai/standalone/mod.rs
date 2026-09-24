@@ -28,7 +28,9 @@ use standalone_agent::bridge::{
     BridgeConfig, BridgeError, BridgeEvent, BridgeTimeouts, OrphanEvent, RetryOptions, SessionSpec,
     StandaloneBridge,
 };
-use standalone_agent::helper::{HelperLaunchConfig, default_helper_entry};
+use standalone_agent::helper::{
+    HelperLaunchConfig, default_helper_entry, default_helper_executable,
+};
 use standalone_agent::protocol::{AgentUsage, HelperSubagents};
 use standalone_agent::provider::ProviderProfile;
 use standalone_agent::secrets::SecretString;
@@ -67,9 +69,10 @@ pub struct StandaloneConfig {
     /// Absolute path to the bundled helper entry (`dist/main.js`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_entry: Option<PathBuf>,
-    /// Explicit executable for the helper. Defaults to `node` on `PATH`; the
-    /// helper requires Node.js >= 22.19.0. Set this when Node is not on `PATH`
-    /// or when a different runtime should be used.
+    /// Explicit executable for the helper. When unset, warpi prefers the Node
+    /// runtime the installer bundled next to the executable and only then falls
+    /// back to `node` on `PATH`; the helper requires Node.js >= 22.19.0. Set
+    /// this to force a specific runtime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub helper_executable: Option<PathBuf>,
     #[serde(default = "default_true")]
@@ -804,6 +807,7 @@ pub fn request_config(
         helper_executable: config
             .helper_executable
             .clone()
+            .or_else(default_helper_executable)
             .unwrap_or_else(|| PathBuf::from("node")),
         data_dir: StandaloneConfig::data_dir(),
         session_file,

@@ -54,8 +54,10 @@ pub const REQUIRED_NODE_VERSION_STR: &str = "22.19.0";
 pub enum RuntimeCheckError {
     #[error(
         "the helper runtime `{executable}` was not found. warpi runs the standalone backend on \
-         Node.js >= {required}; install an official Node.js {required}+ build (nodejs.org) or set \
-         `helper_executable` in the standalone config to an existing node binary"
+         Node.js >= {required}: it prefers the Node runtime bundled next to the executable and \
+         otherwise resolves `{executable}` on PATH. Install an official Node.js {required}+ build \
+         (nodejs.org), reinstall warpi to restore its bundled runtime, or set `helper_executable` \
+         in the standalone config to an existing node binary"
     )]
     NotFound {
         executable: String,
@@ -63,8 +65,8 @@ pub enum RuntimeCheckError {
     },
     #[error(
         "the helper runtime `{executable}` is Node.js {found}, but this build needs Node.js >= \
-         {required}. Install an official Node.js {required} (LTS) or newer, or set \
-         `helper_executable` in the standalone config"
+         {required}. Install an official Node.js {required} (LTS) or newer, reinstall warpi to \
+         restore its bundled runtime, or set `helper_executable` in the standalone config"
     )]
     Version {
         executable: String,
@@ -74,8 +76,9 @@ pub enum RuntimeCheckError {
     #[error(
         "the helper runtime `{path}` failed to start (exit code {code:?}). warpi needs a working \
          Node.js >= {required}; this is a Node/runtime failure, not a warpi failure. Install an \
-         official Node.js LTS build from nodejs.org, or set `helper_executable` in the standalone \
-         config to a known-good node binary. Runtime stderr:\n{stderr}"
+         official Node.js LTS build from nodejs.org, reinstall warpi to restore its bundled \
+         runtime, or set `helper_executable` in the standalone config to a known-good node \
+         binary. Runtime stderr:\n{stderr}"
     )]
     Unusable {
         path: String,
@@ -550,6 +553,50 @@ pub fn default_helper_entry() -> Option<PathBuf> {
     None
 }
 
+/// Path of the bundled Node runtime inside `<exe_dir>/standalone/node`, per
+/// platform. Windows ships `node.exe` directly; Unix distributions ship the
+/// upstream layout at `bin/node`.
+#[cfg(windows)]
+const BUNDLED_NODE_RELATIVE: &[&str] = &["node.exe"];
+#[cfg(not(windows))]
+const BUNDLED_NODE_RELATIVE: &[&str] = &["bin/node", "node"];
+
+/// First existing Node executable inside a bundled runtime directory.
+fn bundled_runtime_in(node_dir: &Path) -> Option<PathBuf> {
+    BUNDLED_NODE_RELATIVE
+        .iter()
+        .map(|relative| node_dir.join(relative))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Locate the Node runtime the installer placed next to the executable.
+///
+/// Resolution order for the helper executable (documented in
+/// `standalone/ARCHITECTURE.md`):
+/// 1. an explicit `helper_executable` in the standalone config (the caller
+///    applies this before falling back here);
+/// 2. the runtime bundled by the installer at
+///    `<exe_dir>/standalone/node/node.exe` on Windows (or
+///    `<exe_dir>/standalone/node/bin/node` on Unix), searching a few ancestor
+///    directories so `cargo run` development builds resolve the checkout copy;
+/// 3. the bare name `node`, resolved on `PATH` by the OS (the caller's final
+///    fallback).
+///
+/// Returns `None` when no bundled runtime is present, leaving the decision to
+/// the caller so a development tree can still use the system Node.
+pub fn default_helper_executable() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent().map(Path::to_path_buf);
+    for _ in 0..4 {
+        let Some(candidate_dir) = dir else { break };
+        if let Some(node) = bundled_runtime_in(&candidate_dir.join("standalone").join("node")) {
+            return Some(node);
+        }
+        dir = candidate_dir.parent().map(Path::to_path_buf);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -667,6 +714,24 @@ process.exit(0);"#,
         let resolved =
             resolve_helper_executable_with_path(Path::new("node"), Some(path_env.as_os_str()));
         assert_eq!(resolved.as_deref(), Some(node.as_path()));
+    }
+
+    #[test]
+    fn bundled_runtime_is_found_in_its_install_directory() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_dir = dir.path().join("standalone").join("node");
+        let expected = node_dir.join(BUNDLED_NODE_RELATIVE[0]);
+        std::fs::create_dir_all(expected.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&expected, b"").expect("write");
+        assert_eq!(bundled_runtime_in(&node_dir), Some(expected));
+    }
+
+    #[test]
+    fn bundled_runtime_is_absent_without_an_install() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_dir = dir.path().join("standalone").join("node");
+        std::fs::create_dir_all(&node_dir).expect("mkdir");
+        assert_eq!(bundled_runtime_in(&node_dir), None);
     }
 
     #[tokio::test]

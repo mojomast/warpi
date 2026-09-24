@@ -42,7 +42,22 @@ export const STANDALONE_SYSTEM_GUIDANCE = [
   "Never start ssh without -o BatchMode=yes, vim, nano, top, less, more, REPLs, watch, `tail -f`, or anything else that waits for input or runs forever.",
   "Bound commands yourself: pass -y/--batch/--yes/--no-pager, set connect timeouts (ssh -o BatchMode=yes -o ConnectTimeout=10), and wrap potentially long commands in an explicit timeout (timeout 60s <command>).",
   "If a command is still running, use the bash_output tool with its command id to wait in bounded steps, or tell the user it is still running; do not start another command while it occupies the terminal.",
+  "Do not batch a slow command with other commands: if one command occupies the terminal, the rest of the batch cannot run until it finishes.",
+  platformShellGuidance(),
 ].join(" ");
+
+/**
+ * Tell the model which shell the user's terminal actually runs, so it does not
+ * guess `cmd.exe` syntax on Windows (`%VAR%`) or use `&` (PowerShell's
+ * background operator) where sequencing was intended. The app executes the
+ * commands, so the helper only knows the host platform.
+ */
+function platformShellGuidance(): string {
+  if (process.platform === "win32") {
+    return "This host is Windows and commands run in PowerShell (pwsh), not cmd.exe: use PowerShell syntax (for example `$env:NAME`, not `%NAME%`), sequence commands with `;` (a trailing `&` backgrounds the command), and prefer fast, targeted queries over very slow ones such as `systeminfo`.";
+  }
+  return "Commands run in a POSIX sh-compatible shell.";
+}
 
 export interface ToolCallSpec {
   tool_call_id: string;

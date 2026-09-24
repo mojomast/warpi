@@ -32,8 +32,8 @@ async fn spawn_bridge_at(data_dir: &std::path::Path) -> StandaloneBridge {
     bridge
 }
 
-// Uses the cross-process fixture provider, which is unreliable on Windows;
-// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+// Cross-process fixture test: the real helper talks to a separate Node fixture
+// provider (tests/support/mod.rs).
 fixture_test! {
 async fn a_dangling_tool_call_is_repaired_before_the_next_provider_request() {
     if !node_available() {

@@ -26,6 +26,27 @@ Development-only shims (no apt access): `protoc 25.1`, `cmake 3.31.6`,
 an `alsa.pc` stub, `RUST_FONTCONFIG_DLOPEN=1`, `CARGO_INCREMENTAL=0` — see
 `dev-env.sh`; none of them ship with the product.
 
+## Windows host validation (2026-09-24)
+
+A real Windows host (Windows 10 Home 25H2, x64, system Node v24.8.0, no MSVC)
+was used. Rust 1.92.0 was installed user-space with the
+`x86_64-pc-windows-gnu` host toolchain, so the Rust results use the GNU ABI and
+are **advisory**; the release ABI is MSVC (see `WINDOWS.md`).
+
+| Suite | Command | Result |
+| --- | --- | --- |
+| Rust backend (all targets) | `cargo +1.92.0-x86_64-pc-windows-gnu test -p standalone_agent` | **PASS** — 124 lib + every integration suite, 0 ignored (Windows fixture scoping removed) |
+| Pi helper | `npm test` | **PASS** — 35 passed, 0 failed, 4 live-provider skipped |
+| Installer script | `ISCC windows-installer.iss /DReleaseChannel=warpi ...` | **PASS** — compiles with `standalone\node` staged |
+| Bundled runtime fetch | `script/windows/fetch-node-runtime.ps1 -Arch x64 -Dest <dir>` | **PASS** — SHA-256 verified; staged `node -e` runs |
+| GUI build / installer install / agent round trip | `cargo build -p warp --bin warpi --features gui` | **NOT RUN** — no MSVC/Windows SDK; GNU ABI is not the release ABI |
+
+The `ncrypto::CSPRNG` diagnosis (`WINDOWS.md` §8) was reproduced and root-caused
+here: a helper child environment without a valid `SystemRoot` aborts Node 24's
+startup self-check, while Node 22.19 is immune. warpi 0.1.0's allowlist omitted
+`SystemRoot`; `a062e52` added it. The Windows installer now also bundles a pinned
+Node 22.19.0 (`script/windows/fetch-node-runtime.ps1`).
+
 ## Automated tests
 
 | Suite | Command | Result |

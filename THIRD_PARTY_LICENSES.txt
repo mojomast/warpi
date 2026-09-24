@@ -146,6 +146,15 @@ Direct dependencies: `@earendil-works/pi-coding-agent` 0.84.2 (MIT) and
 bundled `node_modules`; the packaging scripts bundle the production tree
 unpruned so those files travel with the helper. Do not strip them.
 
+Bundled Node.js runtime
+-----------------------
+The Windows installer ships a pinned Node.js 22.19.0 (`standalone\node\node.exe`;
+fetched and SHA-256-verified by `script/windows/fetch-node-runtime.ps1`). Node.js
+is **MIT**-licensed, and its own `LICENSE` file — shipped next to the executable
+— reproduces the licenses of the components embedded in the binary (V8,
+OpenSSL, libuv, ICU, and others). Keep that `LICENSE` with any redistribution of
+the runtime.
+
 Regenerating the authoritative file
 -----------------------------------
 The upstream pipeline already knows how to emit the full file from

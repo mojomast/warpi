@@ -6,6 +6,23 @@ environment `standalone/dev-env.sh`. **No Windows binary was produced and no
 Windows code was executed on this machine.** This document records how far a
 cross-target build got, what stops it, and what a real Windows build needs.
 
+## Windows host validation (2026-09-24)
+
+A real Windows host became available and the sections below were re-verified on
+it. Host: Windows 10 Home 25H2 (build 26200), x64, system **Node v24.8.0**, npm
+11.6, CMake 4.1.2, MinGW-w64 gcc/g++ and LLVM-MinGW clang, **Inno Setup 6**;
+**no MSVC C++ toolchain** and no elevation. Rust 1.92.0 was installed user-space
+with the `x86_64-pc-windows-gnu` host toolchain, so Rust results here are the
+GNU ABI and are **advisory**: the release ABI remains MSVC per the CI job.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Rust backend, all targets | `cargo +1.92.0-x86_64-pc-windows-gnu test -p standalone_agent` | **PASS** — 124 lib tests + every integration suite, **0 ignored** (the Windows fixture scoping was removed; see below) |
+| Pi helper suite | `npm test` | **PASS** — 35 passed, 0 failed, 4 live-provider tests skipped (need `WARPI_REAL_PROVIDER_KEY`) |
+| `ncrypto::CSPRNG` diagnosis | see section 8 | **REPRODUCED** — a stripped child environment reproduces the abort; the bundled env does not |
+| `fetch-node-runtime.ps1` | `-Arch x64 -Dest <dir>` | **PASS** — official archive downloaded, SHA-256 verified, `node.exe` + `LICENSE` + `PROVENANCE.txt` staged, staged `node -e` runs |
+| GUI build / installer install / agent round trip | `cargo build -p warp --bin warpi --features gui` | **NOT RUN** — MSVC + Windows SDK are absent and the session is not elevated; the GNU ABI is not the release ABI. Still unverified end-to-end. |
+
 ## Bottom line
 
 | # | Attempt | Result |
@@ -265,14 +282,13 @@ to ~9.8 GB; the `x86_64-pc-windows-gnu` subdirectory itself is ~640 MB.
 
 ## 8. Runtime requirement and the `ncrypto::CSPRNG` startup abort
 
-The installer bundles the helper's JavaScript and `node_modules` but **no Node
-runtime**. At run time the app spawns the helper as `node <helper>/dist/main.js`
-with an explicit argv, a controlled working directory, and an allowlisted
-environment (`app/src/ai/standalone/mod.rs`; `crates/standalone_agent/src/helper.rs`).
-`helper_executable` defaults to the literal `node` and is resolved on `PATH` by
-the OS; a Windows install therefore uses whatever `node.exe` the machine has.
-**Node.js >= 22.19.0 is required** (helper `engines` and the Pi SDK's own
-metadata) and no version is pinned or shipped.
+The installer bundles the helper's JavaScript and `node_modules`. It also bundles
+a pinned Node.js runtime: the app spawns the helper as
+`node <helper>/dist/main.js` with an explicit argv, a controlled working
+directory, and an allowlisted environment (`app/src/ai/standalone/mod.rs`;
+`crates/standalone_agent/src/helper.rs`), and prefers the runtime next to the
+executable over `PATH`. **Node.js >= 22.19.0 is required** (helper `engines` and
+the Pi SDK's own metadata) and the pinned runtime is 22.19.0.
 
 ### The reported failure
 
@@ -288,7 +304,8 @@ stderr tail:
  ...
 ```
 
-What is established, from Node's source and the field reports:
+What is established (Node's source, the field reports, and reproduction on a
+Windows host on 2026-09-24):
 
 - The assertion is Node's own startup self-check
   (`CHECK(ncrypto::CSPRNG(nullptr, 0))` in `InitializeOncePerProcessInternal`),
@@ -310,56 +327,90 @@ What is established, from Node's source and the field reports:
   (`node.cc`, `print_version` early return) before the OpenSSL/CSPRNG block runs.
   A one-line `-e` script exercises the failing path; `--version` does not.
 
-What remains a hypothesis (no Windows host here, so unverified):
+What is established (verified on a real Windows host, 2026-09-24):
 
-- The user's `node` build is unofficial/corrupted/FIPS-configured, or security
-  software blocks its RNG. warpi's CI `windows-latest` job starts the same helper
-  with the same environment allowlist and reaches the `hello` handshake, so the
-  allowlist alone is not universally fatal — the runtime is the differentiator.
-- warpi's environment allowlist cleared `SystemRoot`/`windir`/`TEMP`/`TMP` and
-  did not set Windows' `TEMP`/`TMP` at all. CI passing suggests this is not the
-  root cause of the reported abort, but it is a real robustness/containment gap.
+- **The trigger is a missing or invalid `SystemRoot` in the child environment,
+  and it is runtime-dependent.** On a clean Windows 10 host with the system Node
+  v24.8.0, a script probe run with `PATH` only — or with `SystemRoot` unset,
+  empty, or pointed at a nonexistent directory — aborts with the exact
+  `src\node.cc:1236` assertion 5/5 times; the same probe with a valid
+  `SystemRoot` passes 5/5. **Node.js 22.19.0 is immune** to the same stripped
+  environment (all probes pass). `windir` does not substitute for `SystemRoot`.
+- **warpi 0.1.0 constructed exactly the failing configuration.** Its helper
+  allowlist was `PATH`/`LANG`/`LC_ALL` plus
+  `HOME`/`TMPDIR`/`WARPI_PI_SCRATCH_DIR`/`PI_OFFLINE`/`NO_COLOR`; it did not pass
+  `SystemRoot`. `git diff 32f770a a062e52 -- crates/standalone_agent/src/helper.rs`
+  shows the gap. Commit `a062e52` added `SystemRoot`/`windir`/`TEMP`/`TMP` and the
+  `check_helper_runtime` probe; that fix is on the branch but not in the
+  `warpi-v0.1.0` tag. Bundling a pinned Node 22.19.0 also sidesteps the class
+  entirely (see "What the code does now").
+- `node --version` is **not** a usable probe: on the same stripped environment it
+  exits 0 and prints the version while `node -e '...'` and `node <script>` abort
+  with `ncrypto::CSPRNG` (exit 134). Node returns from `--version` before the
+  OpenSSL/CSPRNG block runs.
 
 ### What the code does now
 
-`check_helper_runtime` (`crates/standalone_agent/src/helper.rs`) runs before the
-bridge spawns the helper. It resolves the executable on `PATH`, runs a one-line
-`node -e` probe with the same sandbox environment and working directory, and
-reports one of: runtime not found, unsupported version (with the found version),
-or a runtime that failed to start (with its bounded stderr). `StandaloneBridge::spawn`
-maps that to `BridgeError::Runtime`, so the request shows an actionable message
-instead of a raw crash tail. The helper environment now also sets `TEMP`/`TMP`
-to the fork-private scratch dir on all platforms and, on Windows, passes through
-`SystemRoot`/`windir`/`PATHEXT`/`COMSPEC`/`PROCESSOR_ARCHITECTURE`/`NUMBER_OF_PROCESSORS`
-(none carry credentials).
+- **Environment.** `apply_sandbox_env` clears the environment but, on Windows,
+  passes through `SystemRoot`/`windir`/`PATHEXT`/`COMSPEC`/
+  `PROCESSOR_ARCHITECTURE`/`NUMBER_OF_PROCESSORS` (none carry credentials) and
+  points `TEMP`/`TMP` at the fork-private scratch dir. `SystemRoot` is what Node
+  24's CSPRNG startup self-check needs.
+- **Preflight.** `check_helper_runtime` (`crates/standalone_agent/src/helper.rs`)
+  runs before the bridge spawns the helper. It resolves the executable, runs a
+  one-line `node -e` probe with the same sandbox environment and working
+  directory, and reports one of: runtime not found, unsupported version (with the
+  found version), or a runtime that failed to start (with its bounded stderr).
+  `StandaloneBridge::spawn` maps that to `BridgeError::Runtime`, so the request
+  shows an actionable message instead of a raw crash tail. The probe uses a
+  script, not `--version`, for the reason above.
+- **Bundled runtime.** The Windows installer ships a pinned Node.js 22.19.0 at
+  `standalone\node\node.exe`. `script/windows/fetch-node-runtime.ps1` downloads
+  the official archive over HTTPS, verifies its SHA-256 against a pinned value,
+  and stages `node.exe` with Node's `LICENSE` and a `PROVENANCE.txt`; the CI job
+  and `windows-installer.iss` copy it into the install.
 
-### Diagnostics and workarounds for an affected user
+### Runtime selection
 
-Run these in a normal terminal (not inside warpi):
+Resolution order for the helper executable (implemented by
+`default_helper_executable` in `crates/standalone_agent/src/helper.rs`, applied
+in `app/src/ai/standalone/mod.rs`):
+
+1. an explicit `helper_executable` in the standalone config;
+2. the runtime bundled next to the executable
+   (`<exe_dir>/standalone/node/node.exe` on Windows,
+   `<exe_dir>/standalone/node/bin/node` on Unix), searched a few ancestor
+   directories so `cargo run` picks up a development tree;
+3. the bare name `node`, resolved on `PATH` by the OS.
+
+`helper_entry` (the JavaScript) is resolved separately by
+`default_helper_entry` / `WARPI_PI_HELPER_ENTRY`.
+
+### Diagnostics
+
+Release builds from this change bundle and prefer the pinned runtime, so a
+supported install no longer depends on the machine's `node`. For a development
+tree on `PATH`, or to diagnose a hand-configured `helper_executable`, run these
+in a normal terminal (not inside warpi):
 
 ```powershell
 where.exe node
 node --version
-node -e "process.stdout.write(process.crypto ? 'crypto-ok' : 'no')"
 node -e "console.log(require('crypto').randomBytes(8).toString('hex'))"
 ```
 
-If the last two abort with `ncrypto::CSPRNG` while `--version` works, the Node
-runtime itself is broken. Then:
+`node --version` alone proves nothing: it exits before Node initialises OpenSSL.
+If the `-e` check aborts with `ncrypto::CSPRNG` while `--version` works, that
+runtime cannot serve as the helper. Point warpi at a good one by adding to
+`<warpi data dir>\standalone\config.json` (`WARPI_STANDALONE_CONFIG` can point
+elsewhere) and restarting:
 
-1. Install an official Node.js LTS (>= 22.19.0) from nodejs.org and confirm the
-   `node -e` check passes.
-2. Point warpi at that exact binary. In `<warpi data dir>\standalone\config.json`
-   add:
+```json
+"helper_executable": "C:\\Program Files\\nodejs\\node.exe"
+```
 
-   ```json
-   "helper_executable": "C:\\Program Files\\nodejs\\node.exe"
-   ```
-
-   (`WARPI_STANDALONE_CONFIG` can point at a config elsewhere.) The settings page
-   does not yet expose this field, so edit the file. Restart warpi after saving.
-3. If Node lives on `PATH` under a different name/version manager (nvm, fnm,
-   Volta), prefer an explicit `helper_executable` over relying on `PATH`.
+The settings page does not expose this field yet, so edit the file. An explicit
+path also avoids version managers (nvm/fnm/Volta) shadowing `PATH`.
 
 ## What a real Windows build requires
 
@@ -393,22 +444,23 @@ expect.
 
 ## Not verified
 
-- No `warpi.exe` was produced or executed; no Windows GUI, agent turn, or
-  helper session has ever run on Windows.
-- The helper runtime preflight (section 8) was not run against a Windows Node
-  whose startup aborts; the new Windows environment variables and the
-  user-visible failure message were not observed on Windows.
+- No release `warpi.exe` was produced or executed, and no Windows GUI/installer
+  install/agent round trip has run: MSVC and the Windows SDK are absent on the
+  validation host and the GNU ABI Rust build is not the release ABI. The GNU-ABI
+  `standalone_agent` suite and the helper did run on Windows (see "Windows host
+  validation").
+- The helper runtime preflight's user-visible message was not observed through
+  the GUI (no build), but the crash it detects was reproduced directly and its
+  logic is unit-tested.
 - `aws-lc-sys`, `libsqlite3-sys`, the `arborium-*` crates, `zstd-sys`, etc. were
-  not shown to build on a Windows host; only their Linux-host cross-compilation
-  was shown to fail for lack of a cross C compiler.
-- The `windows-latest` job was written against the repository layout but has
-  never been run.
-- The helper was not executed on Windows; its native win32 dependencies were
-  inspected in the lockfile only.
-- Packaging/installer behavior for `warpi` on Windows is untested: the scripts
-  are updated and the installer script compiles under Inno Setup 6.7.1 (local,
-  under Wine), but no installer has been run and no `warpi.exe` has executed
-  (section 5).
+  not built on Windows.
+- The `windows-latest` job's GUI build and installer steps have not been run
+  since the bundled-runtime change.
+- The bundled Node runtime was verified by the fetch script on Windows, but the
+  installer's install/uninstall of `standalone\node` has not been exercised (no
+  installer run).
+- Packaging/installer behavior for `warpi` on Windows: the scripts are updated
+  and the installer script compiles, but no installer has been run.
 
 ## Reproduce
 

@@ -8,15 +8,12 @@
 /// Declare an integration test that depends on the shared cross-process Node
 /// fixture provider ([`FixtureProvider`], `standalone/pi-helper/test/serve-fixture.ts`).
 ///
-/// On windows-latest the helper's first request to that fixture fails with
-/// `provider_error: "Connection error."` (most recently run 35931719012, step
-/// "Test the Rust adapter"), while the same suites pass on Linux and the
-/// helper's own tests pass on the same runner. The root cause is not
-/// reproducible off Windows and remains unverified — tracked for 0.1.1. These
-/// tests are therefore `#[ignore]`d on Windows with a documented reason, which
-/// shows next to each `ignored` line in the adapter-test log, instead of failing
-/// the job. This macro is the single scoping mechanism: unit tests, stub-helper
-/// tests, and every other non-fixture test keep running and enforcing.
+/// These tests spawn the fixture provider and the real helper as separate Node
+/// processes, so they exercise the same wire path as production. They run on
+/// every platform: the harness hands Node a plain absolute entry path (Node.js
+/// 24 rejects the `\\?\` verbatim form `canonicalize()` returns) and the helper
+/// is started with the Windows OS variables its runtime needs. See
+/// `standalone/WINDOWS.md` section 8.
 #[macro_export]
 macro_rules! fixture_test {
     (
@@ -25,10 +22,6 @@ macro_rules! fixture_test {
     ) => {
         $(#[$meta])*
         #[tokio::test]
-        #[cfg_attr(
-            windows,
-            ignore = "cross-process fixture provider is unreliable on Windows (root cause unverified; tracked for 0.1.1); see .github/workflows/warpi-build.yml"
-        )]
         async fn $name($($args)*) $body
     };
 }
@@ -50,12 +43,24 @@ use warp_multi_agent_api as api;
 pub const FIXTURE_STEPS_KEY: &str = "FIXTURE_STEPS";
 
 /// Absolute path to the helper entry compiled by `npm run build`.
+///
+/// `canonicalize()` returns a `\\?\`-prefixed verbatim path on Windows. Node.js
+/// 24's CommonJS loader rejects such an entry path with `EISDIR: lstat 'C:'`
+/// (Node.js 22 tolerated it), so a resolved path is reduced to its plain
+/// absolute form before it is handed to `node`.
 pub fn helper_entry() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
+    let resolved = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../standalone/pi-helper/dist/main.js")
         .canonicalize()
-        .expect("helper dist/main.js must exist; run `npm run build` in standalone/pi-helper")
+        .expect("helper dist/main.js must exist; run `npm run build` in standalone/pi-helper");
+    #[cfg(windows)]
+    {
+        let text = resolved.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    resolved
 }
 
 pub fn pi_helper_dir() -> PathBuf {

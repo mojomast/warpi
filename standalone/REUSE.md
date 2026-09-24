@@ -86,6 +86,7 @@ app/src/terminal/view/queued_prompts_panel.rs  Queued-prompt panel header hint
 app/src/bin/warpi.rs                warpi GUI entry point
 standalone/**                       Docs, helper, evidence, dev shims
 packaging/package-warpi.sh          No-sudo development bundle
+script/windows/fetch-node-runtime.ps1  Fetch, SHA-256-verify, and stage the bundled Node runtime
 .github/workflows/warpi-build.yml   Linux/Windows CI job (not run yet)
 ```
 

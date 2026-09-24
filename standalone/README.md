@@ -32,7 +32,8 @@ cargo test -p standalone_agent
 (cd standalone/pi-helper && npm ci && npm test)
 ```
 
-Runtime: the app launches the helper with `node` on `PATH` (or
-`helper_executable`). No Node runtime is bundled; **Node.js >= 22.19.0 is
-required at runtime**. See `WINDOWS.md` section 8 for the Windows
-`ncrypto::CSPRNG` startup failure and its diagnostics.
+Runtime: the Windows installer bundles a pinned Node.js 22.19.0 and the app
+prefers it over `PATH`; an explicit `helper_executable` still overrides.
+**Node.js >= 22.19.0 is required**. See `WINDOWS.md` section 8 for the runtime
+selection rule, the `ncrypto::CSPRNG` startup failure it closes, and the
+diagnostics.

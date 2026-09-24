@@ -8,24 +8,23 @@
 #   - Linux x86_64: every step passed — release build, the Rust adapter tests,
 #     packaging/package-warpi.sh, and artifact upload.
 #   - Windows x86_64: checkout, pinned protoc + Chocolatey cmake, the Pi helper
-#     build/tests, and the release warpi.exe build passed. The Rust adapter
-#     tests fail deterministically on the cross-process Node fixture
-#     (standalone/pi-helper/test/serve-fixture.ts): the helper's first request
-#     reports provider_error "Connection error." while the same suites pass on
-#     Linux and the helper's own tests pass on the same runner. Run 35931719012
-#     showed session_isolation was only the first affected suite — with it
-#     ignored, transcript_repair failed the same way. In that run the unit tests
-#     and every stub-helper test passed. The fixture's root cause is NOT
-#     reproducible off Windows and remains UNVERIFIED.
+#     build/tests, and the release warpi.exe build passed. Earlier runs saw the
+#     Rust adapter tests fail deterministically on the cross-process Node fixture
+#     (standalone/pi-helper/test/serve-fixture.ts) with provider_error
+#     "Connection error." That scoping is now removed: on a real Windows host the
+#     harness was handing Node.js 24 a `\\?\` verbatim entry path
+#     (canonicalize()), which Node 24's module loader rejects with EISDIR, and the
+#     helper's own test harness omitted the Windows OS variables the runtime
+#     needs. With both fixed, every fixture suite passes on Windows (see
+#     standalone/WINDOWS.md section 8). The original "Connection error." CI run
+#     predates the helper-environment fix and has not been re-run; CI confirms.
 #
-# Test scoping (Windows): every test that spawns the cross-process fixture is
-# declared with the `fixture_test!` macro in
-# crates/standalone_agent/tests/support/mod.rs, which marks it
-# `#[cfg_attr(windows, ignore = "<tracked reason>")]`. That macro is the single
-# mechanism, and the reason appears next to each `ignored` line in the
-# adapter-test log. Unit tests, the stub-helper tests, and every other
-# non-fixture test still run and still enforce on Windows — there is
-# deliberately no blanket `continue-on-error` and no `--no-fail-fast`.
+# Test scoping (Windows): none. Every cross-process-fixture test runs on Windows.
+# Their old failure was the harness passing Node.js 24 a `\\?\` verbatim entry
+# path (canonicalize()), which its module loader rejects; tests/support/mod.rs now
+# normalizes the path and the TS test harness supplies the Windows OS variables
+# the runtime needs. There is deliberately no blanket `continue-on-error` and no
+# `--no-fail-fast`.
 #
 # Artifact independence: in BOTH jobs the bundle assembly, provenance
 # attestation, and artifact upload run BEFORE the adapter-test step, so a
@@ -41,11 +40,13 @@
 # Recommends it), so google/protobuf/descriptor.proto was missing; installing it
 # and setting PROTOC_INCLUDE explicitly is now verified by run 35879868946.
 # Still UNVERIFIED:
-#   * the Windows fixture root cause (tracked for 0.1.1);
+#   * the GUI build, installer install, and agent round trip on Windows (the
+#     local validation host has no MSVC/Windows SDK; the release ABI is MSVC);
 #   * packaging/package-warpi.sh's `npm ci --omit=dev --offline` path relies on
 #     a warm npm cache (setup-node's cache); if that fails the script falls back
 #     to copying the full node_modules, which no runner has exercised;
-#   * the Windows bundle staging/zip and its runtime payload (skipped so far);
+#   * the assembled Windows bundle/zip with the now-bundled Node runtime (the
+#     fetch script itself was verified on Windows);
 #   * the Windows Inno Setup installer built by the windows-x86_64 job: the
 #     script now compiles under Inno Setup 6.7.1 (verified locally for the
 #     warpi/dev/stable channels with the official ISCC under Wine) but the
@@ -242,6 +243,10 @@ jobs:
           Push-Location $helper
           npm ci --omit=dev --no-audit --no-fund
           Pop-Location
+          # Bundle the pinned Node.js runtime so a fresh install never depends on
+          # a system `node` (see standalone/WINDOWS.md); the app prefers it over
+          # PATH. The script verifies the official archive's SHA-256.
+          ./script/windows/fetch-node-runtime.ps1 -Version 22.19.0 -Arch x64 -Dest "$root/standalone/node"
           Compress-Archive -Path "$root/*" -DestinationPath "dist/warpi-windows-x86_64.zip" -Force
           Get-Item "dist/warpi-windows-x86_64.zip" | Format-List Length
 
@@ -299,11 +304,9 @@ jobs:
 
       # Runs last on purpose: the bundle, installer, attestation, and upload
       # above have already completed, so a failing adapter test turns the job red
-      # without costing us the artifacts. The cross-process-fixture suites are
-      # ignored on Windows by the `fixture_test!` macro (single mechanism; the
-      # tracked reason shows next to each `ignored` line). Unit tests, stub-helper
-      # tests, and every other non-fixture test still run: there is deliberately
-      # no blanket `continue-on-error` and no `--no-fail-fast`.
+      # without costing us the artifacts. Every test runs on Windows — there is
+      # no scoped ignore (the cross-process-fixture failure was fixed; see the
+      # header) and no blanket `continue-on-error` / `--no-fail-fast`.
       - name: Test the Rust adapter
         shell: pwsh
         run: cargo test -p standalone_agent

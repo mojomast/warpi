@@ -28,12 +28,12 @@ executable (or via `WARPI_PI_HELPER_ENTRY`).
 
 ## Runtime prerequisite (end users)
 
-The app does **not** bundle a Node.js runtime. It launches the private Pi
-helper with `node` (resolved on `PATH`) unless the standalone config sets
-`helper_executable`. **Node.js >= 22.19.0 is required at runtime** on every
-platform; the Windows installer ships the helper JavaScript and its
-`node_modules` only. See `WINDOWS.md` section 8 for the Windows failure mode and
-the diagnostics to give an affected user.
+**Node.js >= 22.19.0 is required.** The Windows installer bundles a pinned
+Node.js 22.19.0 next to the executable (`standalone\node\node.exe`) and the app
+prefers it; an explicit `helper_executable` still overrides, and a development
+tree without a bundled runtime falls back to `node` on `PATH`. See `WINDOWS.md`
+section 8 for the `ncrypto::CSPRNG` failure mode this closes, the runtime
+selection rule, and the diagnostics for a hand-configured runtime.
 
 ## Configure standalone mode
 

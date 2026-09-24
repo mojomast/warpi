@@ -4,7 +4,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -43,11 +43,14 @@ export class HelperClient {
   readonly stderrLines: string[] = [];
   readonly dataDir: string;
   private exited = false;
+  private readonly outReader: Interface;
+  private readonly errReader: Interface;
 
   private constructor(child: ChildProcessWithoutNullStreams, dataDir: string) {
     this.child = child;
     this.dataDir = dataDir;
     const reader = createInterface({ input: child.stdout });
+    this.outReader = reader;
     reader.on("line", (line) => {
       if (line.trim().length === 0) return;
       let frame: HelperFrame;
@@ -65,6 +68,7 @@ export class HelperClient {
       }
     });
     const stderr = createInterface({ input: child.stderr });
+    this.errReader = stderr;
     stderr.on("line", (line) => this.stderrLines.push(line));
     child.on("exit", () => {
       this.exited = true;
@@ -77,9 +81,23 @@ export class HelperClient {
 
   static async start(options: HelperClientOptions = {}): Promise<HelperClient> {
     const dataDir = await mkdtemp(join(tmpdir(), "warpi-helper-test-"));
+    // Windows Node.js needs `SystemRoot` (and friends) at startup: without it
+    // the OpenSSL/`ncrypto::CSPRNG` self-check aborts on Node 24. The Rust
+    // supervisor passes the same variables (`apply_sandbox_env`), so the test
+    // harness must too, not just on the machine that happened to have them set.
+    const windowsEnv =
+      process.platform === "win32"
+        ? {
+            SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+            windir: process.env.windir ?? process.env.SystemRoot ?? "C:\\Windows",
+            PATHEXT: process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
+            COMSPEC: process.env.COMSPEC ?? "C:\\Windows\\System32\\cmd.exe",
+          }
+        : {};
     const child = spawn(process.execPath, [HELPER_ENTRY], {
       cwd: options.cwd ?? dataDir,
       env: {
+        ...windowsEnv,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         HOME: dataDir,
         WARPI_PI_SCRATCH_DIR: join(dataDir, "scratch"),
@@ -138,11 +156,21 @@ export class HelperClient {
       this.send("shutdown", {});
       await new Promise((resolve) => setTimeout(resolve, 200));
       this.child.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        if (this.exited) return resolve();
+        this.child.once("exit", () => resolve());
+        setTimeout(resolve, 2000);
+      });
     }
+    // Close the readers so a leaked handle cannot keep the test process alive.
+    this.outReader.close();
+    this.errReader.close();
   }
 
   async dispose(): Promise<void> {
     await this.shutdown();
-    await rm(this.dataDir, { recursive: true, force: true });
+    // Windows can briefly hold the child's working directory open after exit;
+    // retry the removal instead of failing the test with EBUSY.
+    await rm(this.dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 }

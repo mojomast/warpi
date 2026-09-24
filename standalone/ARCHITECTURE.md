@@ -143,8 +143,12 @@ session and skips one whose lock is held, while the helper also exits on stdin E
 3. `helper` spawns `node <helper>/dist/main.js` with an explicit argv, a
    controlled working directory, and an allowlisted environment (`PATH`,
    `LANG`, `LC_ALL`, plus `HOME`/`TMPDIR`/`WARPI_PI_SCRATCH_DIR`/`PI_OFFLINE`
-   set to fork-private values). Stdout is parsed as framed protocol; stderr is
-   drained independently into a bounded tail.
+   set to fork-private values; on Windows also `SystemRoot`/`windir`/`PATHEXT`/
+   `COMSPEC`/CPU topology, which a Node runtime needs to start). The executable
+   is resolved as: explicit `helper_executable`, then the runtime bundled next to
+   the executable (`standalone/node/node.exe`), then `node` on `PATH`. Stdout is
+   parsed as framed protocol; stderr is drained independently into a bounded
+   tail.
 4. `bridge` keeps per-conversation state: session generation, the current Pi
    turn, the suspended tool calls, and already-delivered tool call ids. Every
    helper event is checked against session + turn + exchange before it can

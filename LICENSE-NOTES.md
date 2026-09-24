@@ -13,6 +13,7 @@ license texts themselves.
 | New fork code: `crates/standalone_agent/`, `standalone/**` (including `standalone/pi-helper/`), the `warpi` binary/entrypoint and app wiring added by this fork, `packaging/**`, `.github/workflows/warpi-build.yml` | **AGPL-3.0-only** (same terms as the app; see `Cargo.toml` `[workspace.package] license = "AGPL-3.0-only"` and `standalone/pi-helper/package.json` `"license": "AGPL-3.0-only"`) | Fork contributors; upstream notices retained |
 | Behaviour ported from **sasuke39/openwarp**, commit `5045d30` (NDJSON tool-brokering protocol ideas and Warp client-action event shapes) | **MIT** — notice reproduced in `standalone/DONOR-ATTRIBUTION.md` | Copyright (c) 2026 sasuke39 |
 | npm runtime dependencies of the helper: `@earendil-works/pi-coding-agent@0.84.2`, `typebox@1.3.7` (and their transitive dependencies) | Their own licenses — **MIT** for the two pinned packages per their package metadata | Their respective authors; license files/package metadata travel inside `node_modules` when bundled |
+| Bundled Node.js runtime (`standalone\node\` on Windows; staged by `script/windows/fetch-node-runtime.ps1`) | **MIT** for Node.js itself, plus the licenses of Node's own bundled dependencies, reproduced in the shipped `LICENSE` | Copyright Node.js contributors and the Node.js project |
 | The names "Warp" and "warpi", logos, and other brand assets | Not granted by any of the above | Their respective owners |
 
 No donor source file was copied into this repository. The donor's separate
@@ -44,9 +45,10 @@ of that work (the `warpui` crates), MIT-licensed donor attribution, and bundled
 npm dependencies. A binary or source redistribution must:
 
 1. **Keep the license texts.** Ship `LICENSE-AGPL` and `LICENSE-MIT` unchanged
-   with both source and binary distributions. The development bundle produced by
-   `packaging/package-warpi.sh` copies both into the package and the installed
-   directory for this reason.
+   with both source and binary distributions, and keep Node.js's `LICENSE` next
+   to the bundled runtime (`standalone/node/LICENSE`). The development bundle
+   produced by `packaging/package-warpi.sh` copies the project licenses into the
+   package and the installed directory for this reason.
 2. **Honour the MIT notices.** The MIT copyright and permission notice for
    `crates/warpui`/`crates/warpui_core` must be included in copies and
    substantial portions of the software — including compiled binaries that

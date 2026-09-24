@@ -12,8 +12,8 @@ use support::*;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-// Uses the cross-process fixture provider, which is unreliable on Windows;
-// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+// Cross-process fixture test: the real helper talks to a separate Node fixture
+// provider (tests/support/mod.rs).
 fixture_test! {
 async fn two_sessions_with_different_profiles_stay_isolated() {
     if !node_available() {

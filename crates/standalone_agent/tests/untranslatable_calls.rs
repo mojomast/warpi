@@ -91,8 +91,8 @@ async fn an_untranslatable_call_is_answered_in_place() {
     bridge.shutdown().await;
 }
 
-// Uses the cross-process fixture provider, which is unreliable on Windows;
-// `fixture_test!` ignores it there with the tracked reason (tests/support/mod.rs).
+// Cross-process fixture test: the real helper talks to a separate Node fixture
+// provider (tests/support/mod.rs).
 fixture_test! {
 async fn the_real_helper_recovers_from_an_untranslatable_call() {
     if !node_available() {

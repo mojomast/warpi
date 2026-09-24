@@ -122,6 +122,11 @@ Source: "{#TargetProfileDir}\standalone\pi-helper\dist\*"; DestDir: "{app}\stand
 Source: "{#TargetProfileDir}\standalone\pi-helper\package.json"; DestDir: "{app}\standalone\pi-helper"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#TargetProfileDir}\standalone\pi-helper\package-lock.json"; DestDir: "{app}\standalone\pi-helper"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#TargetProfileDir}\standalone\pi-helper\node_modules\*"; DestDir: "{app}\standalone\pi-helper\node_modules"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; The pinned Node.js runtime the helper is launched with. warpi prefers this
+; runtime over any system `node` on the user's PATH, so a fresh install needs no
+; preinstalled Node; see standalone/WINDOWS.md. Inno removes these files on
+; uninstall like every other [Files] entry.
+Source: "{#TargetProfileDir}\standalone\node\*"; DestDir: "{app}\standalone\node"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Registry]
 Root: HKCU; Subkey: "SOFTWARE\Warp.dev\{#MyAppName}"; Flags: uninsdeletekey
