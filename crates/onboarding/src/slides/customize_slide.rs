@@ -76,11 +76,15 @@ pub struct CustomizeUISlide {
     back_button: button::Button,
     next_button: button::Button,
     scroll_state: ClippedScrollStateHandle,
+    /// True when the local Pi backend serves inference (standalone/warpi).
+    /// Rebrands the slide and hides the cloud-backed Warp Drive toggle.
+    local_backend: bool,
 }
 
 impl CustomizeUISlide {
     pub(crate) fn new(
         onboarding_state: ModelHandle<OnboardingStateModel>,
+        local_backend: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         ctx.subscribe_to_model(&onboarding_state, |me, _model, event, ctx| {
@@ -111,6 +115,7 @@ impl CustomizeUISlide {
             back_button: button::Button::default(),
             next_button: button::Button::default(),
             scroll_state: ClippedScrollStateHandle::new(),
+            local_backend,
         }
     }
 
@@ -143,9 +148,14 @@ impl CustomizeUISlide {
     }
 
     fn render_header(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let title_text = if self.local_backend {
+            "Customize your warpi"
+        } else {
+            "Customize your Warp"
+        };
         let title = appearance
             .ui_builder()
-            .paragraph("Customize your Warp")
+            .paragraph(title_text)
             .with_style(UiComponentStyles {
                 font_size: Some(36.),
                 font_weight: Some(Weight::Medium),
@@ -313,23 +323,27 @@ impl CustomizeUISlide {
                 })),
             });
 
-            chips.push(ChipSpec {
-                label: "Warp Drive",
-                is_enabled: ui.show_warp_drive,
-                mouse_state: self.chip_warp_drive_mouse.clone(),
-                on_click: Box::new(|ctx, _, _| {
-                    ctx.dispatch_typed_action(CustomizeSlideAction::ToggleToolsSubSetting {
-                        setting: ToolsPanelSubSetting::WarpDrive,
-                    });
-                }),
-                on_hover: Some(Box::new(|is_hovered, ctx, _, _| {
-                    if is_hovered {
-                        ctx.dispatch_typed_action(CustomizeSlideAction::HoverToolsChip {
+            // Warp Drive is a cloud surface and is hidden in standalone mode; do
+            // not advertise it as an onboarding choice there.
+            if !self.local_backend {
+                chips.push(ChipSpec {
+                    label: "Warp Drive",
+                    is_enabled: ui.show_warp_drive,
+                    mouse_state: self.chip_warp_drive_mouse.clone(),
+                    on_click: Box::new(|ctx, _, _| {
+                        ctx.dispatch_typed_action(CustomizeSlideAction::ToggleToolsSubSetting {
                             setting: ToolsPanelSubSetting::WarpDrive,
                         });
-                    }
-                })),
-            });
+                    }),
+                    on_hover: Some(Box::new(|is_hovered, ctx, _, _| {
+                        if is_hovered {
+                            ctx.dispatch_typed_action(CustomizeSlideAction::HoverToolsChip {
+                                setting: ToolsPanelSubSetting::WarpDrive,
+                            });
+                        }
+                    })),
+                });
+            }
         }
 
         render_toggle_card(

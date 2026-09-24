@@ -2207,6 +2207,7 @@ impl RootView {
                 default_model_id,
                 enforces_autonomy,
                 auth_state,
+                crate::standalone_ui::local_backend(),
                 ctx,
             );
             view.set_pricing_promotion_message(onboarding_pricing_promotion_message(ctx), ctx);
@@ -2669,7 +2670,7 @@ impl RootView {
                 // onboarding never drives the user toward login. It still has to
                 // persist the local completion flag the account-first path would
                 // otherwise only set when a login is skipped.
-                let standalone = crate::standalone_ui::hidden_ui();
+                let standalone = crate::standalone_ui::local_backend();
                 if !account_first || standalone {
                     mark_local_onboarding_completed(ctx);
                     if FeatureFlag::HOAOnboardingFlow.is_enabled() {
@@ -2773,6 +2774,35 @@ impl RootView {
                 ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
                 self.start_pending_tutorial(ctx);
                 self.start_autoupdate_polling(ctx);
+                ctx.notify();
+            }
+            AgentOnboardingEvent::LocalProviderSettingsRequested(selected_settings) => {
+                // The local-backend welcome slide sent the user to add a provider
+                // key. Complete local onboarding (the local backend never requires a
+                // Warp login) and open Settings -> Agents -> Local Pi provider.
+                let AuthOnboardingState::Onboarding { target, .. } = &self.auth_onboarding_state
+                else {
+                    return;
+                };
+                let target = target.clone();
+
+                mark_local_onboarding_completed(ctx);
+                if FeatureFlag::HOAOnboardingFlow.is_enabled() {
+                    mark_hoa_onboarding_completed(ctx);
+                }
+
+                let is_logged_in = AuthStateProvider::as_ref(ctx).get().is_logged_in();
+                let team_context = UserWorkspaces::as_ref(ctx).team_context_for_operation(ctx);
+                apply_onboarding_settings(selected_settings, is_logged_in, team_context, ctx);
+
+                let workspace = target.to_workspace(ctx);
+                let tutorial = OnboardingTutorial::from(selected_settings.clone());
+                self.pending_tutorial = Some(tutorial);
+                self.auth_onboarding_state = AuthOnboardingState::Terminal(workspace);
+                ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
+                self.start_pending_tutorial(ctx);
+                self.start_autoupdate_polling(ctx);
+                self.open_settings_page_in_existing_window(&SettingsSection::LocalProvider, ctx);
                 ctx.notify();
             }
             AgentOnboardingEvent::OnboardingSkipped => {

@@ -9,6 +9,7 @@
 //! native Warp behavior is untouched while standalone mode is off.
 
 use crate::settings_view::SettingsSection;
+use warp_core::channel::{Channel, ChannelState};
 
 /// Version shown in About when the build has no compile-time release tag.
 /// Keep in sync with `standalone/VERSION` and the `warp` crate version.
@@ -17,6 +18,15 @@ pub const WARPI_VERSION: &str = "v0.1.1";
 /// True when the standalone (local Pi) backend is serving agent requests.
 pub fn hidden_ui() -> bool {
     crate::ai::standalone::is_enabled()
+}
+
+/// True when this build serves inference from the local Pi backend at all:
+/// either standalone mode is configured, or this is the warpi channel, which has
+/// no Warp account to sign in to. The onboarding flow uses this so a fresh warpi
+/// install never routes the user through a Warp login and shows the
+/// local-backend welcome slide instead.
+pub fn local_backend() -> bool {
+    crate::ai::standalone::is_enabled() || ChannelState::channel() == Channel::Warpi
 }
 
 /// Settings sections that require a Warp account or the cloud backend.
